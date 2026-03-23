@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 4
+names: ['Heavy Gun', 'Knife', 'Person', 'Pistol']
+
+roboflow:
+  workspace: eltons-workspace
+  project: knife-detection-hgvy2-6wvtg
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/eltons-workspace/knife-detection-hgvy2-6wvtg/dataset/1
