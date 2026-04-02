@@ -1,43 +1,37 @@
 from ultralytics import YOLO
 
 def main():
-    # Modelo mais forte (muito mais confiável que o n)
-    model = YOLO("yolov8m.pt")
+    model = YOLO("yolov8l.pt") 
 
     model.train(
-        data="dataset/data.yaml",
+        data="dataset/dataset.yaml",
 
-        # Treinamento mais longo
-        epochs=120,
+        epochs=200,
+        imgsz=640,          
+        batch=8,            
 
-        # Resolução maior ajuda em objetos pequenos (facas principalmente)
-        imgsz=640,
-
-        # GPU
         device=0,
-
-        # Melhor uso de CPU
         workers=4,
+        cache=True,
+        amp=True,
 
-        # Batch maior se sua GPU aguentar
-        batch=16,
+        cos_lr=True,
+        patience=30,
+        close_mosaic=10,
 
-        # Early stopping (evita overfitting)
-        patience=20,
-
-        # Data augmentation (CRÍTICO)
         hsv_h=0.015,
         hsv_s=0.7,
         hsv_v=0.4,
-        degrees=10,
+        degrees=5,
         translate=0.1,
-        scale=0.5,
-        shear=2.0,
-        flipud=0.0,
+        scale=0.3,
         fliplr=0.5,
         mosaic=1.0,
 
-        # Salvar melhor modelo
+        dropout=0.1,
+
+        val=True,
+        plots=False,
         save=True
     )
 

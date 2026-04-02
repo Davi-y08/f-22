@@ -1,0 +1,12 @@
+train: ../train/images
+val: ../valid/images
+
+nc: 3
+names: ['cigarette', 'person', 'smoke']
+
+roboflow:
+  workspace: eltons-workspace
+  project: eltons-workspace
+  version: dataset
+  license: Private
+  url: https://app.roboflow.com/eltons-workspace/eltons-workspace/dataset

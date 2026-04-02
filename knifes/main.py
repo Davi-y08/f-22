@@ -2,52 +2,44 @@ from ultralytics import YOLO
 import cv2
 from collections import deque
 
-# Carregar modelo
 model = YOLO("./runs/detect/train3/weights/best.pt")
 
 cap = cv2.VideoCapture(0)
+cap.set(3, 1280)
+cap.set(4, 720)
 
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-
-cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
-
-# Buffer para estabilidade (últimos frames)
 history = deque(maxlen=10)
 
 CONF_THRESHOLD = 0.6
-ALERT_FRAMES = 5  # precisa detectar em X frames seguidos
+ALERT_FRAMES = 5
 
 while True:
     ret, frame = cap.read()
     if not ret:
         break
 
-    # Inferência SEM stream (mais correto)
-    results = model(frame, conf=CONF_THRESHOLD)
+    results = model(frame, conf=CONF_THRESHOLD, verbose=False)
 
     detected = False
+    annotated_frame = frame.copy()
 
     for r in results:
-        boxes = r.boxes
-
-        if boxes is not None:
-            for box in boxes:
-                conf = float(box.conf[0])
-
-                if conf > CONF_THRESHOLD:
-                    detected = True
-
         annotated_frame = r.plot()
 
-    # Adiciona no histórico
+        if r.boxes is not None:
+            for box in r.boxes:
+                conf = float(box.conf[0])
+                cls = int(box.cls[0])
+
+                if conf > CONF_THRESHOLD and cls == 1:  # knife
+                    detected = True
+
     history.append(detected)
 
-    # Verifica consistência
-    if history.count(True) >= ALERT_FRAMES:
+    if sum(history) >= ALERT_FRAMES:
         cv2.putText(
             annotated_frame,
-            "ALERTA: POSSIVEL ARMA",
+            "ALERTA: FACA DETECTADA",
             (50, 50),
             cv2.FONT_HERSHEY_SIMPLEX,
             1,
