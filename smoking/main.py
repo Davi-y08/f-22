@@ -3,7 +3,6 @@ from ultralytics import YOLO
 import cv2
 import math
 
-
 MODEL_PATH = "runs/detect/train/weights/best.pt"
 VIDEO_SOURCE = 0 
 
@@ -16,7 +15,6 @@ CIGARETTE_CLASS_NAME = "cigarette"
 MAX_DISTANCE_TO_PERSON = 80
 
 MIN_FRAMES_SMOKING = 15
-
 
 def box_center(box):
     x1, y1, x2, y2 = box

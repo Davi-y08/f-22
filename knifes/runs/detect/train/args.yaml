@@ -13,7 +13,7 @@ cache: true
 device: '0'
 workers: 4
 project: null
-name: train
+name: train3
 exist_ok: false
 pretrained: true
 optimizer: auto
@@ -106,4 +106,4 @@ auto_augment: randaugment
 erasing: 0.4
 cfg: null
 tracker: botsort.yaml
-save_dir: C:\Users\oisyz\OneDrive\Desktop\projects\f-22\knifes\runs\detect\train
+save_dir: C:\Users\oisyz\OneDrive\Desktop\projects\f-22\knifes\runs\detect\train3
