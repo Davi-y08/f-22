@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import queue
 import sys
@@ -29,11 +30,45 @@ def _runtime_base_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def _runtime_asset_path(base_dir: Path, relative_name: str) -> Path | None:
+    candidates: list[Path] = [
+        (base_dir / relative_name).resolve(),
+        (base_dir / "_internal" / relative_name).resolve(),
+    ]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append((Path(str(meipass)) / relative_name).resolve())
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if candidate.exists():
+            return candidate
+
+    return None
+
+
 def _looks_like_model_path(reference: str) -> bool:
     lowered = reference.lower().strip()
     if any(token in lowered for token in ("/", "\\")):
         return True
     return lowered.endswith((".pt", ".onnx", ".engine", ".torchscript"))
+
+
+def _camera_startup_failed(camera_status: dict[str, Any]) -> bool:
+    if camera_status.get("state") == "error":
+        return True
+    if camera_status.get("online"):
+        return False
+    if camera_status.get("last_frame_at"):
+        return False
+
+    reconnect_attempts = int(camera_status.get("reconnect_attempts") or 0)
+    last_error = str(camera_status.get("last_error") or "").strip()
+    return reconnect_attempts > 0 and bool(last_error)
 
 
 class StealthLensDesktopApp:
@@ -98,6 +133,17 @@ class StealthLensDesktopApp:
             except Exception:
                 return None
             return None
+
+        lite_template_path = _runtime_asset_path(self.runtime_base_dir, "config.lite.example.json")
+        if lite_template_path is not None:
+            try:
+                with lite_template_path.open("r", encoding="utf-8") as handle:
+                    template_raw = json.load(handle)
+                if isinstance(template_raw, dict):
+                    save_raw_config(config_path, template_raw)
+                    return "Config criado automaticamente a partir do perfil Lite."
+            except Exception:
+                pass
 
         save_raw_config(config_path, build_default_raw_config())
         return "Config criado automaticamente com padrão inicial."
@@ -201,7 +247,7 @@ class StealthLensDesktopApp:
         tree.heading("tipo", text="Tipo")
         tree.heading("nome", text="Nome")
         tree.heading("host", text="Host/Index")
-        tree.heading("rtsp", text="RTSP")
+        tree.heading("rtsp", text="Streams")
         tree.column("tipo", width=80, anchor="center")
         tree.column("nome", width=230, anchor="w")
         tree.column("host", width=140, anchor="w")
@@ -248,7 +294,9 @@ class StealthLensDesktopApp:
         ttk.Label(advanced, text="Senha RTSP", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=4)
         ttk.Entry(advanced, textvariable=self.password_var, show="*").grid(row=1, column=1, sticky="ew", pady=4)
 
-        ttk.Label(advanced, text="RTSP Manual", style="Body.TLabel").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Label(advanced, text="URL Manual (RTSP/HTTP)", style="Body.TLabel").grid(
+            row=2, column=0, sticky="w", pady=4
+        )
         ttk.Entry(advanced, textvariable=self.manual_rtsp_var).grid(row=2, column=1, sticky="ew", pady=4)
 
         ttk.Checkbutton(
@@ -459,6 +507,7 @@ class StealthLensDesktopApp:
         config_path = self.config_path_var.get().strip() or "config.json"
         self._configure_logging()
         self._append_log(f"Iniciando monitoramento com config: {config_path}")
+        self._append_log("Atalhos da janela de vídeo: F alterna fullscreen, Q/Esc encerra monitoramento.")
         self._set_status("Inicializando monitoramento...")
         self._monitor_stop.clear()
 
@@ -485,10 +534,34 @@ class StealthLensDesktopApp:
             manager.start()
             self._event_queue.put(("monitor-started", f"Monitoramento iniciado com {len(config.cameras)} câmera(s)."))
 
-            time.sleep(1.5)
-            snapshot = manager.status_snapshot()
-            active_cameras = [camera for camera in snapshot.get("cameras", []) if camera.get("state") != "disabled"]
-            if active_cameras and all(camera.get("state") == "error" for camera in active_cameras):
+            active_cameras: list[dict[str, Any]] = []
+            warmup_deadline = time.time() + 6.0
+            while time.time() < warmup_deadline and not self._monitor_stop.is_set():
+                snapshot = manager.status_snapshot()
+                active_cameras = [camera for camera in snapshot.get("cameras", []) if camera.get("state") != "disabled"]
+                if not active_cameras:
+                    break
+                if any(camera.get("online") or camera.get("last_frame_at") for camera in active_cameras):
+                    break
+                if all(_camera_startup_failed(camera) for camera in active_cameras):
+                    break
+                time.sleep(0.35)
+
+            if active_cameras:
+                online_count = sum(1 for camera in active_cameras if camera.get("online"))
+                details = " | ".join(
+                    f"{camera.get('name', camera.get('camera_id', 'camera'))}: "
+                    f"{'online' if camera.get('online') else 'offline'}"
+                    for camera in active_cameras
+                )
+                self._event_queue.put(
+                    (
+                        "monitor-startup-summary",
+                        f"Câmeras online no início: {online_count}/{len(active_cameras)}. {details}",
+                    )
+                )
+
+            if active_cameras and all(_camera_startup_failed(camera) for camera in active_cameras):
                 details = "; ".join(
                     f"{camera.get('name', camera.get('camera_id', 'camera'))}: "
                     f"{camera.get('last_error') or 'erro desconhecido'}"
@@ -525,7 +598,10 @@ class StealthLensDesktopApp:
                 model_cfg = config.model_catalog.get(model_ref)
                 if model_cfg is not None:
                     if not model_cfg.path.exists():
-                        issues.append(f"{camera.name}: modelo '{model_ref}' não encontrado em '{model_cfg.path}'.")
+                        message = f"{camera.name}: modelo '{model_ref}' não encontrado em '{model_cfg.path}'."
+                        if model_ref == "smoking_monitor":
+                            message += " Para distribuição Lite, gere models/smoking_monitor.onnx e refaça o build."
+                        issues.append(message)
                     continue
 
                 if not _looks_like_model_path(model_ref):
@@ -600,6 +676,10 @@ class StealthLensDesktopApp:
             self._append_log(str(payload))
             return
 
+        if event_name == "monitor-startup-summary":
+            self._append_log(str(payload))
+            return
+
         if event_name == "monitor-ui-reset":
             self.start_button.configure(state="normal")
             self.stop_button.configure(state="disabled")
@@ -630,12 +710,20 @@ class StealthLensDesktopApp:
         self.cameras_tree.delete(*self.cameras_tree.get_children())
         for index, camera in enumerate(self._discovered):
             host_value = str(camera.local_index) if camera.kind == "local" else (camera.host or "")
-            rtsp_ports = ",".join(str(port) for port in sorted(camera.rtsp_ports)) if camera.rtsp_ports else "-"
+            stream_parts: list[str] = []
+            if camera.rtsp_ports:
+                rtsp_ports = ",".join(str(port) for port in sorted(camera.rtsp_ports))
+                stream_parts.append(f"RTSP:{rtsp_ports}")
+            http_ports = getattr(camera, "http_ports", [])
+            if http_ports:
+                http_ports_label = ",".join(str(port) for port in sorted(http_ports))
+                stream_parts.append(f"HTTP:{http_ports_label}")
+            streams_label = " | ".join(stream_parts) if stream_parts else "-"
             self.cameras_tree.insert(
                 "",
                 "end",
                 iid=str(index),
-                values=(camera.kind, camera.name, host_value, rtsp_ports),
+                values=(camera.kind, camera.name, host_value, streams_label),
             )
 
         if self._discovered:
@@ -651,11 +739,7 @@ class StealthLensDesktopApp:
         seen_keys: set[str] = set()
 
         for camera in cameras:
-            source_key = camera.key
-            if camera.kind == "local" and camera.local_index is not None:
-                source_key = f"local:{camera.local_index}"
-            elif camera.host:
-                source_key = f"network:{camera.host.lower()}"
+            source_key = self._discovered_camera_identity(camera)
 
             if source_key in seen_keys:
                 continue
@@ -664,6 +748,18 @@ class StealthLensDesktopApp:
             unique.append(camera)
 
         return unique
+
+    def _discovered_camera_identity(self, camera: DiscoveredCamera) -> str:
+        if camera.kind == "local":
+            if camera.local_index is not None:
+                return f"local:{camera.local_index}"
+            return f"local:{camera.key}:{camera.name}"
+
+        host = (camera.host or "").lower()
+        ports = ",".join(str(port) for port in sorted(camera.rtsp_ports))
+        key = str(camera.key or "").lower()
+        name = str(camera.name or "").strip().lower()
+        return f"network:{host}|ports:{ports}|key:{key}|name:{name}"
 
     def _append_log(self, message: str) -> None:
         timestamp = time.strftime("%H:%M:%S")

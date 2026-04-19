@@ -1,6 +1,48 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
 .venv/
-artifacts/
+.venv-lite/
+venv/
+env/
+
+# Build / packaging
 build/
 dist/
+StealthLensDesktop.spec
+StealthLensDesktopLite.spec
+
+# Runtime output
+artifacts/
+runs/
+*.log
+
+# Local-only config/secrets
+config.json
+.env
+.env.*
+
+# Local model binaries and exports
+models/*.pt
+models/*.pth
+models/*.onnx
+models/*.engine
+models/*.bin
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+
+# OS / editor
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/

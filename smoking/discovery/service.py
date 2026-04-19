@@ -10,7 +10,7 @@ import subprocess
 import uuid
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse, urlunparse
 import xml.etree.ElementTree as ET
 
 import cv2
@@ -29,6 +29,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 
 COMMON_RTSP_PORTS = (554, 8554, 10554)
+COMMON_HTTP_CAMERA_PORTS = (8080, 8081)
 GENERIC_RTSP_PATHS = (
     "",
     "live",
@@ -43,6 +44,13 @@ GENERIC_RTSP_PATHS = (
     "h264Preview_01_sub",
     "axis-media/media.amp",
 )
+GENERIC_HTTP_STREAM_PATHS = (
+    "/video",
+    "/videofeed",
+    "/?action=stream",
+    "/mjpegfeed",
+    "/mjpeg",
+)
 
 
 @dataclass(slots=True)
@@ -56,6 +64,9 @@ class DiscoveredCamera:
     model: str | None = None
     rtsp_ports: list[int] = field(default_factory=list)
     rtsp_server: str | None = None
+    http_ports: list[int] = field(default_factory=list)
+    http_stream_paths: list[str] = field(default_factory=list)
+    http_server: str | None = None
     onvif_xaddrs: list[str] = field(default_factory=list)
     scopes: list[str] = field(default_factory=list)
     discovery_sources: set[str] = field(default_factory=set)
@@ -82,6 +93,7 @@ def discover_cameras(
     logger: Any,
     include_local_webcams: bool = True,
     rtsp_scan_timeout: float = 0.35,
+    http_scan_timeout: float = 0.35,
     onvif_timeout: float = 2.5,
 ) -> list[DiscoveredCamera]:
     discovered: dict[str, DiscoveredCamera] = {}
@@ -90,6 +102,9 @@ def discover_cameras(
         _merge_discovered_camera(discovered, camera)
 
     for camera in _discover_rtsp_devices(timeout=rtsp_scan_timeout, logger=logger):
+        _merge_discovered_camera(discovered, camera)
+
+    for camera in _discover_http_devices(timeout=http_scan_timeout, logger=logger):
         _merge_discovered_camera(discovered, camera)
 
     results = list(discovered.values())
@@ -159,11 +174,13 @@ def resolve_camera_source(
         return SourceResolutionResult(
             source=None,
             validated=False,
-            error="A câmera escolhida não possui host RTSP utilizável.",
+            error="A câmera escolhida não possui host utilizável.",
         )
 
     tested_urls: list[str] = []
-    candidates = build_candidate_rtsp_urls(camera, username=username, password=password)
+    rtsp_candidates = build_candidate_rtsp_urls(camera, username=username, password=password)
+    http_candidates = build_candidate_http_urls(camera, username=username, password=password)
+    candidates = _prioritize_stream_candidates(camera, rtsp_candidates, http_candidates)
 
     if validate_stream:
         for url in candidates:
@@ -181,26 +198,31 @@ def resolve_camera_source(
             tested_urls=candidates[:1],
         )
 
-    if manual_rtsp_url:
-        tested_urls.append(manual_rtsp_url)
+    manual_candidates = _expand_manual_stream_candidates(manual_rtsp_url) if manual_rtsp_url else []
+    if manual_candidates:
+        for candidate in manual_candidates:
+            if candidate not in tested_urls:
+                tested_urls.append(candidate)
+
         if not validate_stream:
             return SourceResolutionResult(
-                source=manual_rtsp_url,
+                source=manual_candidates[0],
                 validated=False,
                 tested_urls=tested_urls,
             )
 
-        if test_stream_source(manual_rtsp_url, backend_preference="auto", timeout_seconds=timeout_seconds):
-            return SourceResolutionResult(
-                source=manual_rtsp_url,
-                validated=True,
-                tested_urls=tested_urls,
-            )
+        for manual_candidate in manual_candidates:
+            if test_stream_source(manual_candidate, backend_preference="auto", timeout_seconds=timeout_seconds):
+                return SourceResolutionResult(
+                    source=manual_candidate,
+                    validated=True,
+                    tested_urls=tested_urls,
+                )
 
     return SourceResolutionResult(
         source=None,
         validated=False,
-        error="Nenhuma URL RTSP foi validada para esta câmera.",
+        error="Nenhuma URL de stream (RTSP/HTTP) foi validada para esta câmera.",
         tested_urls=tested_urls,
     )
 
@@ -229,13 +251,27 @@ def build_candidate_rtsp_urls(
     return _build_candidate_rtsp_urls(camera=camera, username=username, password=password)
 
 
+def build_candidate_http_urls(
+    camera: DiscoveredCamera,
+    username: str = "",
+    password: str = "",
+) -> list[str]:
+    return _build_candidate_http_urls(camera=camera, username=username, password=password)
+
+
 def describe_camera(camera: DiscoveredCamera) -> str:
     if camera.kind == "local":
         return f"{camera.name} | local | index={camera.local_index}"
 
     sources = ",".join(sorted(camera.discovery_sources)) or "network"
-    ports = ",".join(str(port) for port in sorted(camera.rtsp_ports)) or "?"
-    return f"{camera.name} | host={camera.host} | src={sources} | rtsp={ports}"
+    details: list[str] = [f"host={camera.host}", f"src={sources}"]
+    if camera.rtsp_ports:
+        rtsp_ports = ",".join(str(port) for port in sorted(camera.rtsp_ports))
+        details.append(f"rtsp={rtsp_ports}")
+    if camera.http_ports:
+        http_ports = ",".join(str(port) for port in sorted(camera.http_ports))
+        details.append(f"http={http_ports}")
+    return f"{camera.name} | " + " | ".join(details)
 
 
 def _discover_onvif_devices(timeout: float, logger: Any) -> list[DiscoveredCamera]:
@@ -282,11 +318,7 @@ def _discover_onvif_devices(timeout: float, logger: Any) -> list[DiscoveredCamer
 
 
 def _discover_rtsp_devices(timeout: float, logger: Any) -> list[DiscoveredCamera]:
-    hosts_to_probe: set[str] = set()
-    for host, network in _enumerate_local_networks(logger):
-        hosts_to_probe.add(host)
-        for candidate in network.hosts():
-            hosts_to_probe.add(str(candidate))
+    hosts_to_probe = _enumerate_hosts_for_network_scan(logger)
 
     if not hosts_to_probe:
         return []
@@ -321,6 +353,52 @@ def _discover_rtsp_devices(timeout: float, logger: Any) -> list[DiscoveredCamera
     if cameras:
         logger.info(
             "rtsp_discovery_completed",
+            extra={"devices_found": len(cameras), "hosts_scanned": len(hosts_to_probe)},
+        )
+
+    return list(cameras.values())
+
+
+def _discover_http_devices(timeout: float, logger: Any) -> list[DiscoveredCamera]:
+    hosts_to_probe = _enumerate_hosts_for_network_scan(logger)
+    if not hosts_to_probe:
+        return []
+
+    cameras: dict[str, DiscoveredCamera] = {}
+    futures = []
+    with ThreadPoolExecutor(max_workers=64) as executor:
+        for host in hosts_to_probe:
+            for port in COMMON_HTTP_CAMERA_PORTS:
+                futures.append(executor.submit(_probe_http_camera_endpoint, host, port, timeout))
+
+        for future in as_completed(futures):
+            host, port, is_camera, server, stream_paths, name = future.result()
+            if not is_camera:
+                continue
+
+            key = f"network:{host}"
+            camera = cameras.setdefault(
+                key,
+                DiscoveredCamera(
+                    key=key,
+                    kind="network",
+                    name=name or f"IP Webcam {host}",
+                    host=host,
+                ),
+            )
+            if name:
+                camera.name = name
+            if port not in camera.http_ports:
+                camera.http_ports.append(port)
+            for stream_path in stream_paths:
+                if stream_path not in camera.http_stream_paths:
+                    camera.http_stream_paths.append(stream_path)
+            camera.http_server = camera.http_server or server
+            camera.discovery_sources.add("http-scan")
+
+    if cameras:
+        logger.info(
+            "http_camera_discovery_completed",
             extra={"devices_found": len(cameras), "hosts_scanned": len(hosts_to_probe)},
         )
 
@@ -363,30 +441,36 @@ def _resolve_camera_source(camera: DiscoveredCamera) -> str | int | None:
 
     host = camera.host
     if not host:
-        print("A câmera escolhida não possui host RTSP utilizável.")
+        print("A câmera escolhida não possui host utilizável.")
         return None
 
-    username = input("Usuário RTSP (Enter se não houver): ").strip()
-    password = getpass.getpass("Senha RTSP (Enter se não houver): ")
-    print("Testando URLs RTSP candidatas. Isso pode levar alguns segundos...")
+    username = input("Usuário (Enter se não houver): ").strip()
+    password = getpass.getpass("Senha (Enter se não houver): ")
+    print("Testando URLs de stream candidatas (RTSP/HTTP). Isso pode levar alguns segundos...")
 
-    for url in _build_candidate_rtsp_urls(camera, username, password):
+    rtsp_candidates = _build_candidate_rtsp_urls(camera, username, password)
+    http_candidates = _build_candidate_http_urls(camera, username, password)
+    candidates = _prioritize_stream_candidates(camera, rtsp_candidates, http_candidates)
+
+    for url in candidates:
         if test_stream_source(url, backend_preference="auto", timeout_seconds=4.0):
-            print(f"RTSP validado com sucesso: {url}")
+            print(f"Stream validado com sucesso: {url}")
             return url
 
-    print("Nenhuma URL RTSP comum respondeu com sucesso.")
-    manual = input("Cole a URL RTSP manualmente ou pressione Enter para cancelar: ").strip()
+    print("Nenhuma URL de stream comum respondeu com sucesso.")
+    manual = input("Cole a URL manualmente (RTSP/HTTP) ou pressione Enter para cancelar: ").strip()
     if not manual:
         print("Configuração cancelada.")
         return None
 
-    if test_stream_source(manual, backend_preference="auto", timeout_seconds=4.0):
-        print("URL RTSP manual validada com sucesso.")
-        return manual
+    manual_candidates = _expand_manual_stream_candidates(manual)
+    for manual_candidate in manual_candidates:
+        if test_stream_source(manual_candidate, backend_preference="auto", timeout_seconds=4.0):
+            print(f"URL manual validada com sucesso: {manual_candidate}")
+            return manual_candidate
 
     if _prompt_yes_no("Não foi possível validar a URL manual. Deseja salvar mesmo assim?", default=False):
-        return manual
+        return manual_candidates[0] if manual_candidates else manual
 
     print("Configuração cancelada.")
     return None
@@ -412,6 +496,91 @@ def _build_candidate_rtsp_urls(
             urls.append(f"rtsp://{auth}{host}:{port}{suffix}")
 
     return urls
+
+
+def _build_candidate_http_urls(
+    camera: DiscoveredCamera,
+    username: str,
+    password: str,
+) -> list[str]:
+    host = camera.host or ""
+    ports = camera.http_ports or list(COMMON_HTTP_CAMERA_PORTS)
+    paths = camera.http_stream_paths or list(GENERIC_HTTP_STREAM_PATHS)
+    auth = ""
+    if username:
+        auth = quote(username, safe="") + ":" + quote(password, safe="") + "@"
+
+    urls: list[str] = []
+    for port in ports:
+        for path in paths:
+            normalized_path = "/" + str(path or "").lstrip("/")
+            urls.append(f"http://{auth}{host}:{port}{normalized_path}")
+
+    deduplicated: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        if url in seen:
+            continue
+        seen.add(url)
+        deduplicated.append(url)
+    return deduplicated
+
+
+def _expand_manual_stream_candidates(manual_url: str) -> list[str]:
+    value = (manual_url or "").strip()
+    if not value:
+        return []
+
+    candidates: list[str] = [value]
+    parsed = urlparse(value)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        return candidates
+
+    has_specific_path = bool(parsed.path and parsed.path.strip("/") and parsed.path not in {"/"})
+    has_query = bool(parsed.query)
+    if has_specific_path or has_query:
+        return candidates
+
+    for stream_path in GENERIC_HTTP_STREAM_PATHS:
+        normalized_path = "/" + stream_path.lstrip("/")
+        path_part, _, query_part = normalized_path.partition("?")
+        expanded = urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                path_part,
+                "",
+                query_part,
+                "",
+            )
+        )
+        candidates.append(expanded)
+
+    deduplicated: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        deduplicated.append(candidate)
+    return deduplicated
+
+
+def _prioritize_stream_candidates(
+    camera: DiscoveredCamera,
+    rtsp_candidates: list[str],
+    http_candidates: list[str],
+) -> list[str]:
+    if not rtsp_candidates:
+        return http_candidates
+    if not http_candidates:
+        return rtsp_candidates
+
+    sources = {value.lower() for value in camera.discovery_sources}
+    if "http-scan" in sources and "rtsp-scan" not in sources:
+        return [*http_candidates, *rtsp_candidates]
+
+    return [*rtsp_candidates, *http_candidates]
 
 
 def _vendor_specific_paths(camera: DiscoveredCamera) -> list[str]:
@@ -445,6 +614,15 @@ def _enumerate_local_networks(logger: Any) -> list[tuple[str, ipaddress.IPv4Netw
     if networks:
         logger.info("local_networks_detected", extra={"count": len(networks)})
     return networks
+
+
+def _enumerate_hosts_for_network_scan(logger: Any) -> set[str]:
+    hosts_to_probe: set[str] = set()
+    for host, network in _enumerate_local_networks(logger):
+        hosts_to_probe.add(host)
+        for candidate in network.hosts():
+            hosts_to_probe.add(str(candidate))
+    return hosts_to_probe
 
 
 def _enumerate_with_psutil() -> list[tuple[str, ipaddress.IPv4Network]]:
@@ -545,6 +723,103 @@ def _probe_rtsp_endpoint(host: str, port: int, timeout: float) -> tuple[str, int
     return host, port, True, server
 
 
+def _probe_http_camera_endpoint(
+    host: str,
+    port: int,
+    timeout: float,
+) -> tuple[str, int, bool, str | None, list[str], str | None]:
+    stream_paths: list[str] = []
+    server: str | None = None
+    name: str | None = None
+
+    for path in GENERIC_HTTP_STREAM_PATHS:
+        status_code, headers, body = _probe_http_endpoint(host, port, path, timeout)
+        if server is None:
+            server = headers.get("server")
+
+        content_type = headers.get("content-type", "").lower()
+        is_stream = ("multipart/x-mixed-replace" in content_type) or ("image/jpeg" in content_type)
+        if status_code in {200, 401} and is_stream:
+            normalized_path = "/" + path.lstrip("/")
+            if normalized_path not in stream_paths:
+                stream_paths.append(normalized_path)
+
+        if _looks_like_ip_webcam_body(body):
+            name = f"IP Webcam {host}"
+
+    status_code, headers, body = _probe_http_endpoint(host, port, "/", timeout)
+    if server is None:
+        server = headers.get("server")
+    if _looks_like_ip_webcam_body(body):
+        name = f"IP Webcam {host}"
+
+    is_camera = bool(stream_paths) or bool(name)
+    if is_camera and not stream_paths:
+        stream_paths.append("/video")
+
+    return host, port, is_camera, server, stream_paths, name
+
+
+def _probe_http_endpoint(
+    host: str,
+    port: int,
+    path: str,
+    timeout: float,
+) -> tuple[int | None, dict[str, str], str]:
+    request = (
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\n"
+        "User-Agent: StealthLens/1.0\r\n"
+        "Connection: close\r\n\r\n"
+    ).encode("utf-8")
+
+    raw_response = b""
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as connection:
+            connection.settimeout(timeout)
+            connection.sendall(request)
+            while True:
+                chunk = connection.recv(2048)
+                if not chunk:
+                    break
+                raw_response += chunk
+                if len(raw_response) >= 8192:
+                    break
+    except OSError:
+        return None, {}, ""
+
+    decoded = raw_response.decode("utf-8", errors="ignore")
+    if not decoded:
+        return None, {}, ""
+
+    head, _, body = decoded.partition("\r\n\r\n")
+    lines = [line for line in head.splitlines() if line.strip()]
+    if not lines:
+        return None, {}, body
+
+    status_code: int | None = None
+    try:
+        parts = lines[0].split()
+        if len(parts) >= 2:
+            status_code = int(parts[1])
+    except Exception:
+        status_code = None
+
+    headers: dict[str, str] = {}
+    for line in lines[1:]:
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        headers[key.strip().lower()] = value.strip()
+
+    return status_code, headers, body
+
+
+def _looks_like_ip_webcam_body(body: str) -> bool:
+    lowered = body.lower()
+    return ("ip webcam" in lowered) or ("pavel khlebovich" in lowered)
+
+
 def _parse_onvif_response(data: bytes, fallback_host: str) -> DiscoveredCamera | None:
     try:
         root = ET.fromstring(data)
@@ -621,6 +896,7 @@ def _merge_discovered_camera(
     existing.manufacturer = existing.manufacturer or camera.manufacturer
     existing.model = existing.model or camera.model
     existing.rtsp_server = existing.rtsp_server or camera.rtsp_server
+    existing.http_server = existing.http_server or camera.http_server
 
     for port in camera.rtsp_ports:
         if port not in existing.rtsp_ports:
@@ -629,6 +905,14 @@ def _merge_discovered_camera(
     for xaddr in camera.onvif_xaddrs:
         if xaddr not in existing.onvif_xaddrs:
             existing.onvif_xaddrs.append(xaddr)
+
+    for port in camera.http_ports:
+        if port not in existing.http_ports:
+            existing.http_ports.append(port)
+
+    for path in camera.http_stream_paths:
+        if path not in existing.http_stream_paths:
+            existing.http_stream_paths.append(path)
 
     for scope in camera.scopes:
         if scope not in existing.scopes:
@@ -646,16 +930,21 @@ def _print_discovered_cameras(cameras: list[DiscoveredCamera]) -> None:
 
         sources = ",".join(sorted(camera.discovery_sources)) or "network"
         ports = ",".join(str(port) for port in sorted(camera.rtsp_ports)) or "desconhecido"
+        http_ports = ",".join(str(port) for port in sorted(camera.http_ports)) if camera.http_ports else ""
         identity = " | ".join(
             item
             for item in [
                 camera.manufacturer,
                 camera.model,
                 camera.rtsp_server,
+                camera.http_server,
             ]
             if item
         )
-        print(f"[{index}] {camera.name} | host={camera.host} | fontes={sources} | rtsp={ports}")
+        line = f"[{index}] {camera.name} | host={camera.host} | fontes={sources} | rtsp={ports}"
+        if http_ports:
+            line += f" | http={http_ports}"
+        print(line)
         if identity:
             print(f"    {identity}")
         if camera.onvif_xaddrs:

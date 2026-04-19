@@ -234,6 +234,10 @@ class CameraWorker(threading.Thread):
             window_name=self.camera_config.display.window_name or self.camera_config.name,
             frame=annotated,
             max_width=self.camera_config.display.max_width,
+            fullscreen=self.camera_config.display.fullscreen,
+            fit_mode=self.camera_config.display.fit_mode,
+            interpolation=self.camera_config.display.interpolation,
+            enhance=self.camera_config.display.enhance,
         )
 
     def _can_emit_event(self, detection: Detection, zone_name: str | None, cooldown: float) -> bool:

@@ -7,12 +7,21 @@ $ErrorActionPreference = "Stop"
 
 Write-Host "Atualizando pip..."
 python -m pip install --upgrade pip
+if ($LASTEXITCODE -ne 0) {
+    throw "Falha ao atualizar pip."
+}
 
 Write-Host "Instalando dependências do projeto..."
 python -m pip install -r requirements.txt
+if ($LASTEXITCODE -ne 0) {
+    throw "Falha ao instalar dependências do projeto."
+}
 
 Write-Host "Instalando PyInstaller..."
 python -m pip install pyinstaller
+if ($LASTEXITCODE -ne 0) {
+    throw "Falha ao instalar PyInstaller."
+}
 
 Write-Host "Limpando artefatos anteriores de build..."
 $workspace = (Get-Location).Path
@@ -72,3 +81,10 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "Build concluído."
 Write-Host "Executável: .\\dist\\$ExeName\\$ExeName.exe"
+
+$portableZip = ".\\dist\\$ExeName-portable.zip"
+if (Test-Path $portableZip) {
+    Remove-Item -LiteralPath $portableZip -Force
+}
+Compress-Archive -Path ".\\dist\\$ExeName\\*" -DestinationPath $portableZip
+Write-Host "Pacote para compartilhamento: $portableZip"

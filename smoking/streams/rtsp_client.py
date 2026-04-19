@@ -220,23 +220,38 @@ class _OpenCVReader(_BaseReader):
         if isinstance(self.source, str):
             os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
             self.capture = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
+            if not self.capture or not self.capture.isOpened():
+                self.capture = cv2.VideoCapture(self.source)
         else:
-            self.capture = cv2.VideoCapture(self.source)
+            self.capture, self.backend_name = _open_local_capture(int(self.source))
 
         if not self.capture or not self.capture.isOpened():
             raise StreamReadError(f"Não foi possível abrir o stream '{self.source}'.")
 
-        self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+        try:
+            self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+        except Exception:
+            pass
 
     def read(self) -> Any:
         if not self.capture:
             raise StreamReadError("Stream OpenCV não inicializado.")
 
-        success, frame = self.capture.read()
-        if not success or frame is None:
-            raise StreamReadError(f"Falha ao ler frame de '{self.source}'.")
+        last_error: Exception | None = None
+        for _ in range(2):
+            try:
+                success, frame = self.capture.read()
+            except Exception as exc:
+                last_error = exc
+                time.sleep(0.02)
+                continue
+            if success and frame is not None:
+                return frame
+            time.sleep(0.02)
 
-        return frame
+        if last_error is not None:
+            raise StreamReadError(f"Falha ao ler frame de '{self.source}': {last_error}") from last_error
+        raise StreamReadError(f"Falha ao ler frame de '{self.source}'.")
 
     def close(self) -> None:
         if self.capture is not None:
@@ -290,12 +305,10 @@ def test_stream_source(
     timeout_seconds: float = 5.0,
 ) -> bool:
     if isinstance(source, int):
-        capture = cv2.VideoCapture(source)
+        capture = None
         try:
-            if not capture or not capture.isOpened():
-                return False
-            success, _ = capture.read()
-            return bool(success)
+            capture, _ = _open_local_capture(int(source))
+            return bool(capture and capture.isOpened())
         finally:
             if capture is not None:
                 capture.release()
@@ -324,7 +337,9 @@ def test_stream_source(
     capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
     try:
         if not capture or not capture.isOpened():
-            return False
+            capture = cv2.VideoCapture(source)
+            if not capture or not capture.isOpened():
+                return False
         started = time.time()
         while (time.time() - started) < timeout_seconds:
             success, frame = capture.read()
@@ -334,3 +349,115 @@ def test_stream_source(
     finally:
         if capture is not None:
             capture.release()
+
+
+def _open_local_capture(source_index: int) -> tuple[cv2.VideoCapture, str]:
+    attempts: list[str] = []
+    for backend_name, backend_id in _iter_local_backends():
+        capture = _create_local_capture(source_index, backend_id)
+        if capture is None or not capture.isOpened():
+            attempts.append(f"{backend_name}:open_failed")
+            continue
+
+        profile_attempts = (
+            ("1080p-mjpg", "MJPG", 1920, 1080, 30),
+            ("720p-mjpg", "MJPG", 1280, 720, 30),
+            ("native", None, None, None, None),
+        )
+
+        for profile_name, fourcc, width, height, fps in profile_attempts:
+            _apply_capture_profile(capture, fourcc=fourcc, width=width, height=height, fps=fps)
+            ok, reason = _warmup_capture(capture)
+            if ok:
+                return capture, f"opencv-{backend_name}:{profile_name}"
+            attempts.append(f"{backend_name}:{profile_name}:{reason}")
+
+        capture.release()
+
+    details = "; ".join(attempts[-6:]) if attempts else "sem detalhes"
+    raise StreamReadError(
+        f"Não foi possível abrir webcam local {source_index}. Tentativas: {details}"
+    )
+
+
+def _iter_local_backends() -> list[tuple[str, int | None]]:
+    candidates: list[tuple[str, int | None]] = []
+    dshow = getattr(cv2, "CAP_DSHOW", None)
+    msmf = getattr(cv2, "CAP_MSMF", None)
+
+    if isinstance(dshow, int) and dshow > 0:
+        candidates.append(("dshow", dshow))
+    if isinstance(msmf, int) and msmf > 0:
+        candidates.append(("msmf", msmf))
+    candidates.append(("default", None))
+
+    unique: list[tuple[str, int | None]] = []
+    seen_ids: set[int | None] = set()
+    for name, backend_id in candidates:
+        if backend_id in seen_ids:
+            continue
+        seen_ids.add(backend_id)
+        unique.append((name, backend_id))
+    return unique
+
+
+def _create_local_capture(source_index: int, backend_id: int | None) -> cv2.VideoCapture | None:
+    try:
+        if backend_id is None:
+            return cv2.VideoCapture(source_index)
+        return cv2.VideoCapture(source_index, backend_id)
+    except Exception:
+        return None
+
+
+def _apply_capture_profile(
+    capture: cv2.VideoCapture,
+    fourcc: str | None,
+    width: int | None,
+    height: int | None,
+    fps: int | None,
+) -> None:
+    if fourcc:
+        try:
+            capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
+        except Exception:
+            pass
+    if width:
+        try:
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        except Exception:
+            pass
+    if height:
+        try:
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        except Exception:
+            pass
+    if fps:
+        try:
+            capture.set(cv2.CAP_PROP_FPS, fps)
+        except Exception:
+            pass
+
+    try:
+        capture.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+    except Exception:
+        pass
+
+
+def _warmup_capture(capture: cv2.VideoCapture, attempts: int = 10) -> tuple[bool, str]:
+    consecutive_success = 0
+    required_success = 3
+    for _ in range(attempts):
+        try:
+            success, frame = capture.read()
+        except Exception as exc:
+            consecutive_success = 0
+            return False, str(exc)
+        if success and frame is not None and getattr(frame, "size", 0) > 0:
+            consecutive_success += 1
+            if consecutive_success >= required_success:
+                return True, "ok"
+        else:
+            consecutive_success = 0
+        time.sleep(0.03)
+    return False, "no_frames"

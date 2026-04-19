@@ -48,15 +48,29 @@ def render_monitor_frame(
         color = detection.overlay_color or _color_for_label(detection.label)
         label = detection.overlay_label or _default_overlay_label(detection)
 
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2, lineType=cv2.LINE_AA)
+        text_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.58, 2)
+        text_w, text_h = text_size
+        label_top = max(0, y1 - text_h - baseline - 8)
+        label_bottom = max(text_h + baseline + 8, y1)
+        label_right = min(annotated.shape[1] - 1, x1 + text_w + 12)
+        cv2.rectangle(
+            annotated,
+            (x1, label_top),
+            (label_right, label_bottom),
+            color,
+            thickness=-1,
+            lineType=cv2.LINE_AA,
+        )
         cv2.putText(
             annotated,
             label,
-            (x1, max(25, y1 - 10)),
+            (x1 + 6, max(18, label_bottom - 7)),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            color,
+            0.58,
+            (255, 255, 255),
             2,
+            lineType=cv2.LINE_AA,
         )
 
     cv2.rectangle(annotated, (0, 0), (annotated.shape[1], 90), (8, 12, 18), -1)
@@ -68,6 +82,7 @@ def render_monitor_frame(
         0.85,
         (255, 255, 255),
         2,
+        lineType=cv2.LINE_AA,
     )
 
     for index, line in enumerate(status_lines[:3]):
@@ -79,6 +94,7 @@ def render_monitor_frame(
             0.52,
             (160, 230, 255),
             1,
+            lineType=cv2.LINE_AA,
         )
 
     event_y = annotated.shape[0] - 20
@@ -91,6 +107,7 @@ def render_monitor_frame(
             0.55,
             (255, 220, 120),
             2,
+            lineType=cv2.LINE_AA,
         )
         event_y -= 22
 

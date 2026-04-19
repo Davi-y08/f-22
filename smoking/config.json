@@ -56,7 +56,11 @@
         "window_name": "Stealth Lens Agent - Entrada",
         "show_metrics": true,
         "draw_zones": true,
-        "max_width": 1280
+        "max_width": null,
+        "fullscreen": false,
+        "fit_mode": "contain",
+        "interpolation": "auto",
+        "enhance": true
       },
       "smoking_behavior": {
         "enabled": true,
@@ -94,7 +98,11 @@
         "window_name": "Stealth Lens Agent - Webcam Local 1",
         "show_metrics": true,
         "draw_zones": true,
-        "max_width": 1280
+        "max_width": null,
+        "fullscreen": false,
+        "fit_mode": "contain",
+        "interpolation": "auto",
+        "enhance": true
       },
       "smoking_behavior": {
         "enabled": true,

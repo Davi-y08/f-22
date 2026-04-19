@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,8 @@ class ZoneConfig:
 class ModelConfig:
     alias: str
     path: Path
+    backend: str = "auto"
+    class_names: tuple[str, ...] = ()
     class_filters: tuple[str, ...] = ()
     confidence: float = 0.25
     iou: float = 0.45
@@ -28,6 +31,9 @@ class ModelConfig:
     emit_events: bool = True
     use_tracking: bool = False
     tracker: str | None = None
+    input_size: int = 640
+    download_url: str | None = None
+    sha256: str | None = None
     enabled: bool = True
 
 
@@ -37,7 +43,11 @@ class DisplayConfig:
     window_name: str | None = None
     show_metrics: bool = True
     draw_zones: bool = True
-    max_width: int | None = 1280
+    max_width: int | None = None
+    fullscreen: bool = False
+    fit_mode: str = "contain"
+    interpolation: str = "auto"
+    enhance: bool = False
 
 
 @dataclass(frozen=True)
@@ -107,6 +117,8 @@ def load_config(config_path: str | Path) -> AgentConfig:
     raw = load_raw_config(path)
 
     base_dir = path.parent
+    raw = _apply_runtime_model_migrations(raw, base_dir)
+    raw = _apply_runtime_camera_migrations(raw)
     logging_cfg = _load_logging_config(raw.get("logging", {}))
     storage_cfg = _load_storage_config(base_dir, raw.get("storage", {}))
     model_catalog = _load_model_catalog(base_dir, raw.get("model_catalog", {}))
@@ -198,7 +210,13 @@ def build_camera_entry_from_template(
     template = _select_camera_template(raw_config)
     entry = copy.deepcopy(template)
 
-    entry["id"] = _sanitize_camera_id(camera_id) or _build_camera_id(name=name, source=source)
+    is_local_source = isinstance(source, int) or str(source).strip().isdigit()
+    if is_local_source:
+        entry["id"] = _sanitize_camera_id(camera_id) or _build_camera_id(name=name, source=source)
+    else:
+        # Para fontes de rede/RTSP, o ID deve refletir o stream para permitir múltiplas
+        # câmeras no mesmo host (ex.: NVR com channels diferentes).
+        entry["id"] = _build_camera_id(name=name, source=source)
     entry["name"] = name
     entry["source"] = source
     entry["enabled"] = True
@@ -213,7 +231,11 @@ def build_camera_entry_from_template(
     display.setdefault("enabled", True)
     display.setdefault("show_metrics", True)
     display.setdefault("draw_zones", True)
-    display.setdefault("max_width", 1280)
+    display.setdefault("max_width", None)
+    display.setdefault("fullscreen", False)
+    display.setdefault("fit_mode", "contain")
+    display.setdefault("interpolation", "auto")
+    display.setdefault("enhance", isinstance(source, int))
     display["window_name"] = f"Stealth Lens Agent - {name}"
 
     if "smoking_monitor" in [str(model) for model in entry.get("models", [])]:
@@ -280,11 +302,14 @@ def _load_model_catalog(base_dir: Path, raw: dict[str, Any]) -> dict[str, ModelC
             raise ValueError(f"Modelo '{alias}' inválido em 'model_catalog'.")
 
         path_value = item.get("path", alias)
+        class_names = tuple(str(value).lower() for value in item.get("class_names", []))
         class_filters = tuple(str(value).lower() for value in item.get("class_filters", []))
 
         catalog[str(alias)] = ModelConfig(
             alias=str(alias),
             path=_resolve_path(base_dir, path_value),
+            backend=str(item.get("backend", "auto")).lower(),
+            class_names=class_names,
             class_filters=class_filters,
             confidence=float(item.get("confidence", 0.25)),
             iou=float(item.get("iou", 0.45)),
@@ -294,6 +319,9 @@ def _load_model_catalog(base_dir: Path, raw: dict[str, Any]) -> dict[str, ModelC
             emit_events=bool(item.get("emit_events", True)),
             use_tracking=bool(item.get("use_tracking", False)),
             tracker=_optional_str(item.get("tracker")),
+            input_size=max(160, int(item.get("input_size", 640))),
+            download_url=_optional_str(item.get("download_url")),
+            sha256=_optional_str(item.get("sha256")),
             enabled=bool(item.get("enabled", True)),
         )
 
@@ -311,10 +339,12 @@ def _load_camera_config(raw: dict[str, Any], index: int) -> CameraConfig:
     if not isinstance(models_raw, list):
         raise ValueError(f"'models' da câmera '{name}' deve ser uma lista.")
 
+    source = _parse_source(raw.get("source", ""))
+
     return CameraConfig(
         id=camera_id,
         name=name,
-        source=_parse_source(raw.get("source", "")),
+        source=source,
         models=tuple(str(model) for model in models_raw),
         fps_analysis=max(0.5, float(raw.get("fps_analysis", 3.0))),
         enabled=bool(raw.get("enabled", True)),
@@ -325,7 +355,7 @@ def _load_camera_config(raw: dict[str, Any], index: int) -> CameraConfig:
         cooldown_seconds=max(0.0, float(raw.get("cooldown_seconds", 10.0))),
         backend_preference=str(raw.get("backend_preference", "auto")).lower(),
         zones=_load_zones(raw.get("zones", [])),
-        display=_load_display_config(raw.get("display", {}), name),
+        display=_load_display_config(raw.get("display", {}), name, source),
         smoking_behavior=_load_smoking_behavior_config(raw.get("smoking_behavior", {})),
     )
 
@@ -357,19 +387,28 @@ def _load_zones(raw: Any) -> tuple[ZoneConfig, ...]:
     return tuple(zones)
 
 
-def _load_display_config(raw: Any, camera_name: str) -> DisplayConfig:
+def _load_display_config(raw: Any, camera_name: str, source: str | int) -> DisplayConfig:
     if raw is None:
-        return DisplayConfig(window_name=f"Stealth Lens - {camera_name}")
+        raw = {}
     if not isinstance(raw, dict):
         raise ValueError("'display' deve ser um objeto JSON.")
 
-    max_width = raw.get("max_width", 1280)
+    max_width = raw.get("max_width", None)
+    parsed_max_width = int(max_width) if max_width not in (None, "") else None
+    if parsed_max_width is not None and parsed_max_width < 320:
+        parsed_max_width = 320
+
+    is_local_source = isinstance(source, int)
     return DisplayConfig(
         enabled=bool(raw.get("enabled", False)),
         window_name=_optional_str(raw.get("window_name")) or f"Stealth Lens - {camera_name}",
         show_metrics=bool(raw.get("show_metrics", True)),
         draw_zones=bool(raw.get("draw_zones", True)),
-        max_width=int(max_width) if max_width not in (None, "") else None,
+        max_width=parsed_max_width,
+        fullscreen=bool(raw.get("fullscreen", False)),
+        fit_mode=_normalize_fit_mode(raw.get("fit_mode", "contain")),
+        interpolation=_normalize_interpolation(raw.get("interpolation", "auto")),
+        enhance=bool(raw.get("enhance", is_local_source)),
     )
 
 
@@ -402,7 +441,47 @@ def _resolve_path(base_dir: Path, value: Any) -> Path:
     path = Path(str(value)).expanduser()
     if path.is_absolute():
         return path.resolve()
-    return (base_dir / path).resolve()
+
+    for candidate in _relative_path_candidates(base_dir, path):
+        if candidate.exists():
+            return candidate.resolve()
+
+    return _relative_path_candidates(base_dir, path)[0].resolve()
+
+
+def _find_existing_relative_path(base_dir: Path, relative_path: Path) -> Path | None:
+    for candidate in _relative_path_candidates(base_dir, relative_path):
+        if candidate.exists():
+            return candidate.resolve()
+    return None
+
+
+def _relative_path_candidates(base_dir: Path, relative_path: Path) -> list[Path]:
+    normalized_relative = Path(str(relative_path))
+    base = base_dir.resolve()
+
+    candidates: list[Path] = [
+        base / normalized_relative,
+        base / "_internal" / normalized_relative,
+    ]
+
+    if base.name.lower() == "_internal":
+        candidates.append(base.parent / normalized_relative)
+
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(str(meipass)) / normalized_relative)
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+
+    return unique
 
 
 def _parse_source(value: Any) -> str | int:
@@ -445,10 +524,10 @@ def _sanitize_camera_id(value: str | None) -> str | None:
 def _build_camera_id(name: str, source: str | int) -> str:
     source_key = _source_identity(source)
     if source_key.startswith("local:"):
-        return f"webcam-{source_key}"
+        return _slugify(f"webcam-{source_key}")
     if source_key.startswith("rtsp://"):
         digest = hashlib.sha1(source_key.encode("utf-8")).hexdigest()[:10]
-        return f"rtsp-{digest}"
+        return _slugify(f"rtsp-{digest}")
     return _slugify(name)
 
 
@@ -531,7 +610,11 @@ def _select_camera_template(raw_config: dict[str, Any]) -> dict[str, Any]:
             "window_name": "Stealth Lens Agent - Camera",
             "show_metrics": True,
             "draw_zones": True,
-            "max_width": 1280,
+            "max_width": None,
+            "fullscreen": False,
+            "fit_mode": "contain",
+            "interpolation": "auto",
+            "enhance": True,
         },
         "smoking_behavior": {
             "enabled": True,
@@ -574,6 +657,134 @@ def _default_model_catalog() -> dict[str, Any]:
     }
 
 
+def _apply_runtime_model_migrations(raw_config: dict[str, Any], base_dir: Path) -> dict[str, Any]:
+    raw = copy.deepcopy(raw_config)
+    model_catalog = raw.get("model_catalog")
+    if not isinstance(model_catalog, dict):
+        return raw
+
+    relative_onnx_path = Path("models/smoking_monitor.onnx")
+    if _find_existing_relative_path(base_dir, relative_onnx_path) is None:
+        return raw
+
+    smoking_alias = "smoking_monitor"
+    smoking_entry = model_catalog.get(smoking_alias)
+    onnx_path_value = relative_onnx_path.as_posix()
+
+    if smoking_entry is None or not isinstance(smoking_entry, dict):
+        model_catalog[smoking_alias] = _build_lite_smoking_model_entry(onnx_path_value)
+        return raw
+
+    if _should_migrate_smoking_model_entry(smoking_entry, base_dir):
+        migrated = _build_lite_smoking_model_entry(onnx_path_value)
+        for key in (
+            "confidence",
+            "iou",
+            "event_type",
+            "cooldown_seconds",
+            "trigger_in_zones_only",
+            "emit_events",
+            "use_tracking",
+            "enabled",
+        ):
+            if key in smoking_entry:
+                migrated[key] = smoking_entry[key]
+
+        class_names = smoking_entry.get("class_names")
+        if isinstance(class_names, list) and class_names:
+            migrated["class_names"] = class_names
+
+        class_filters = smoking_entry.get("class_filters")
+        if isinstance(class_filters, list) and class_filters:
+            migrated["class_filters"] = class_filters
+
+        model_catalog[smoking_alias] = migrated
+        return raw
+
+    smoking_raw_path = str(smoking_entry.get("path", "")).strip().replace("\\", "/").lower()
+    if smoking_raw_path.endswith(".onnx"):
+        smoking_entry.setdefault("backend", "onnx")
+        class_names = smoking_entry.get("class_names")
+        if not isinstance(class_names, list) or not class_names:
+            smoking_entry["class_names"] = ["cigarette", "person", "smoke"]
+    else:
+        smoking_entry.setdefault("backend", "ultralytics")
+
+    return raw
+
+
+def _apply_runtime_camera_migrations(raw_config: dict[str, Any]) -> dict[str, Any]:
+    raw = copy.deepcopy(raw_config)
+    cameras = raw.get("cameras")
+    if not isinstance(cameras, list):
+        return raw
+
+    for camera in cameras:
+        if not isinstance(camera, dict):
+            continue
+        source = _parse_source(camera.get("source", ""))
+        display = camera.get("display")
+        if not isinstance(display, dict):
+            display = {}
+            camera["display"] = display
+
+        is_local_source = isinstance(source, int)
+        if is_local_source and display.get("max_width") == 1280:
+            display["max_width"] = None
+
+        display.setdefault("enabled", True)
+        display.setdefault("show_metrics", True)
+        display.setdefault("draw_zones", True)
+        display.setdefault("fit_mode", "contain")
+        display.setdefault("interpolation", "auto")
+        display.setdefault("enhance", is_local_source)
+        display.setdefault("fullscreen", False)
+        display["fit_mode"] = _normalize_fit_mode(display.get("fit_mode"))
+        display["interpolation"] = _normalize_interpolation(display.get("interpolation"))
+
+    return raw
+
+
+def _build_lite_smoking_model_entry(path_value: str) -> dict[str, Any]:
+    return {
+        "path": path_value,
+        "backend": "onnx",
+        "class_names": ["cigarette", "person", "smoke"],
+        "class_filters": ["person", "cigarette", "smoke"],
+        "confidence": 0.25,
+        "iou": 0.45,
+        "cooldown_seconds": 8,
+        "emit_events": False,
+        "use_tracking": True,
+        "enabled": True,
+    }
+
+
+def _should_migrate_smoking_model_entry(model_entry: dict[str, Any], base_dir: Path) -> bool:
+    if _optional_str(model_entry.get("download_url")):
+        return False
+
+    raw_path = str(model_entry.get("path", "")).strip()
+    if not raw_path:
+        return True
+
+    resolved_path = _resolve_path(base_dir, raw_path)
+    if resolved_path.exists():
+        return False
+
+    backend = str(model_entry.get("backend", "auto")).strip().lower()
+    normalized = raw_path.replace("\\", "/").lower()
+    if backend == "onnx":
+        return True
+    if normalized.endswith(".onnx"):
+        return True
+    if normalized.endswith(".pt") or normalized.endswith(".pth"):
+        return True
+    if "runs/detect/train/weights/best.pt" in normalized:
+        return True
+    return True
+
+
 def _apply_raw_defaults(raw_config: dict[str, Any]) -> dict[str, Any]:
     raw = copy.deepcopy(raw_config)
     defaults = build_default_raw_config()
@@ -595,3 +806,22 @@ def _apply_raw_defaults(raw_config: dict[str, Any]) -> dict[str, Any]:
         raw["cameras"] = _deduplicate_camera_entries(cameras_raw)
 
     return raw
+
+
+def _normalize_fit_mode(value: Any) -> str:
+    raw = str(value or "contain").strip().lower()
+    if raw in {"contain", "fit"}:
+        return "contain"
+    if raw in {"cover", "fill"}:
+        return "cover"
+    if raw in {"stretch", "stretched"}:
+        return "stretch"
+    return "contain"
+
+
+def _normalize_interpolation(value: Any) -> str:
+    raw = str(value or "auto").strip().lower()
+    allowed = {"auto", "nearest", "linear", "area", "cubic", "lanczos"}
+    if raw in allowed:
+        return raw
+    return "auto"

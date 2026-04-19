@@ -1,6 +1,6 @@
 {
-  "agent_id": "stealth-lens-local",
-  "device": "auto",
+  "agent_id": "stealth-lens-lite",
+  "device": "cpu",
   "status_interval_seconds": 15,
   "logging": {
     "level": "INFO",
@@ -13,38 +13,35 @@
   },
   "model_catalog": {
     "smoking_monitor": {
-      "path": "runs/detect/train/weights/best.pt",
+      "path": "models/smoking_monitor.onnx",
+      "backend": "onnx",
+      "class_names": [
+        "cigarette",
+        "person",
+        "smoke"
+      ],
       "class_filters": [
         "person",
         "cigarette",
         "smoke"
       ],
       "confidence": 0.25,
+      "iou": 0.45,
       "cooldown_seconds": 8,
       "emit_events": false,
       "use_tracking": true,
-      "tracker": "bytetrack.yaml"
-    },
-    "intrusion": {
-      "path": "yolov8m.pt",
-      "class_filters": [
-        "person"
-      ],
-      "event_type": "intrusion",
-      "confidence": 0.35,
-      "cooldown_seconds": 12,
-      "trigger_in_zones_only": true
+      "enabled": true
     }
   },
   "cameras": [
     {
-      "id": "entrance",
+      "id": "camera-entrada",
       "name": "Entrada",
-      "source": "rtsp://usuario:senha@ip:554/stream1",
+      "source": 0,
       "models": [
         "smoking_monitor"
       ],
-      "fps_analysis": 3,
+      "fps_analysis": 2,
       "enabled": true,
       "snapshot_on_event": true,
       "queue_maxsize": 4,
@@ -53,14 +50,14 @@
       "zones": [],
       "display": {
         "enabled": true,
-        "window_name": "Stealth Lens Agent - RTSP Entrance",
+        "window_name": "Stealth Lens Agent - Entrada",
         "show_metrics": true,
         "draw_zones": true,
         "max_width": null,
         "fullscreen": false,
         "fit_mode": "contain",
         "interpolation": "auto",
-        "enhance": false
+        "enhance": true
       },
       "smoking_behavior": {
         "enabled": true,
@@ -71,7 +68,7 @@
         "event_type": "smoking",
         "max_distance_px": 80,
         "smoke_distance_multiplier": 1.35,
-        "min_frames": 12,
+        "min_frames": 10,
         "decay_frames": 1,
         "smoke_boost_frames": 2,
         "stale_track_seconds": 5,
