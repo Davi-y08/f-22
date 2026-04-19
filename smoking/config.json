@@ -1,0 +1,117 @@
+{
+  "agent_id": "stealth-lens-local",
+  "device": "auto",
+  "status_interval_seconds": 15,
+  "logging": {
+    "level": "INFO",
+    "json": true
+  },
+  "storage": {
+    "events_dir": "artifacts/events",
+    "snapshots_dir": "artifacts/snapshots",
+    "status_path": "artifacts/status/agent-status.json"
+  },
+  "model_catalog": {
+    "smoking_monitor": {
+      "path": "runs/detect/train/weights/best.pt",
+      "class_filters": [
+        "person",
+        "cigarette",
+        "smoke"
+      ],
+      "confidence": 0.25,
+      "cooldown_seconds": 8,
+      "emit_events": false,
+      "use_tracking": true,
+      "tracker": "bytetrack.yaml"
+    },
+    "intrusion": {
+      "path": "yolov8m.pt",
+      "class_filters": [
+        "person"
+      ],
+      "event_type": "intrusion",
+      "confidence": 0.35,
+      "cooldown_seconds": 12,
+      "trigger_in_zones_only": true
+    }
+  },
+  "cameras": [
+    {
+      "id": "entrance",
+      "name": "Entrada",
+      "source": 0,
+      "models": [
+        "smoking_monitor"
+      ],
+      "fps_analysis": 3,
+      "enabled": true,
+      "snapshot_on_event": true,
+      "queue_maxsize": 4,
+      "cooldown_seconds": 10,
+      "backend_preference": "auto",
+      "zones": [],
+      "display": {
+        "enabled": true,
+        "window_name": "Stealth Lens Agent - Entrada",
+        "show_metrics": true,
+        "draw_zones": true,
+        "max_width": 1280
+      },
+      "smoking_behavior": {
+        "enabled": true,
+        "model": "smoking_monitor",
+        "person_label": "person",
+        "cigarette_label": "cigarette",
+        "smoke_label": "smoke",
+        "event_type": "smoking",
+        "max_distance_px": 80,
+        "smoke_distance_multiplier": 1.35,
+        "min_frames": 12,
+        "decay_frames": 1,
+        "smoke_boost_frames": 2,
+        "stale_track_seconds": 5,
+        "event_cooldown_seconds": 20,
+        "require_person_track": true
+      }
+    },
+    {
+      "id": "webcam-local-1",
+      "name": "Webcam Local 1",
+      "source": 1,
+      "models": [
+        "smoking_monitor"
+      ],
+      "fps_analysis": 3,
+      "enabled": true,
+      "snapshot_on_event": true,
+      "queue_maxsize": 4,
+      "cooldown_seconds": 10,
+      "backend_preference": "auto",
+      "zones": [],
+      "display": {
+        "enabled": true,
+        "window_name": "Stealth Lens Agent - Webcam Local 1",
+        "show_metrics": true,
+        "draw_zones": true,
+        "max_width": 1280
+      },
+      "smoking_behavior": {
+        "enabled": true,
+        "model": "smoking_monitor",
+        "person_label": "person",
+        "cigarette_label": "cigarette",
+        "smoke_label": "smoke",
+        "event_type": "smoking",
+        "max_distance_px": 80,
+        "smoke_distance_multiplier": 1.35,
+        "min_frames": 12,
+        "decay_frames": 1,
+        "smoke_boost_frames": 2,
+        "stale_track_seconds": 5,
+        "event_cooldown_seconds": 20,
+        "require_person_track": true
+      }
+    }
+  ]
+}
