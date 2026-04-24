@@ -22,6 +22,7 @@ class CameraWorker(threading.Thread):
         emitter: FileEventEmitter,
         logger: Any,
         display_renderer: DisplayRenderer | None = None,
+        display_camera_count: int = 1,
     ) -> None:
         super().__init__(name=f"camera-worker-{camera_config.id}", daemon=True)
         self.agent_config = agent_config
@@ -29,6 +30,7 @@ class CameraWorker(threading.Thread):
         self.emitter = emitter
         self.logger = logger
         self.display_renderer = display_renderer
+        self.display_camera_count = max(1, int(display_camera_count))
 
         self._stop_event = threading.Event()
         self._status_lock = threading.Lock()
@@ -40,6 +42,22 @@ class CameraWorker(threading.Thread):
         self._recent_events: deque[str] = deque(maxlen=5)
         self._behavior_status_lines: list[str] = []
         self._started_at = time.monotonic()
+        self._last_render_at = 0.0
+        self._render_interval = _resolve_render_interval(
+            configured_target_fps=self.camera_config.display.target_fps,
+            display_camera_count=self.display_camera_count,
+        )
+        self._last_stream_status_at = 0.0
+        self._cached_stream_status: dict[str, Any] = {
+            "online": False,
+            "backend": None,
+            "last_frame_at": None,
+            "last_error": None,
+            "reconnect_attempts": 0,
+            "dropped_frames": 0,
+            "queue_depth": 0,
+        }
+        self._zones_cache: dict[tuple[int, int], list[tuple[str, list[tuple[int, int]]]]] = {}
         self._stats = {
             "analyzed_frames": 0,
             "emitted_events": 0,
@@ -112,12 +130,12 @@ class CameraWorker(threading.Thread):
 
                 now = time.perf_counter()
                 if now - self._last_analysis_at < analysis_interval:
-                    self._render_frame(packet.frame)
+                    self._maybe_render_frame(packet.frame, now=now, force=False)
                     continue
 
                 self._last_analysis_at = now
                 self._analyze_frame(packet.frame)
-                self._render_frame(packet.frame)
+                self._maybe_render_frame(packet.frame, now=time.perf_counter(), force=True)
         except Exception as exc:
             self.logger.exception(
                 "camera_worker_failed",
@@ -198,11 +216,24 @@ class CameraWorker(threading.Thread):
             total_inference_ms - current_average
         ) / analyzed_frames
 
-    def _render_frame(self, frame: Any) -> None:
+    def _maybe_render_frame(self, frame: Any, now: float, force: bool) -> None:
+        if not self.display_renderer or not self.camera_config.display.enabled:
+            return
+        if not force and self._render_interval > 0.0:
+            if (now - self._last_render_at) < self._render_interval:
+                return
+        self._last_render_at = now
+        self._render_frame(frame, now=now)
+
+    def _render_frame(self, frame: Any, now: float | None = None) -> None:
         if not self.display_renderer or not self.camera_config.display.enabled:
             return
 
-        stream_status = self.stream.status_snapshot()
+        snapshot_at = now if now is not None else time.perf_counter()
+        if (snapshot_at - self._last_stream_status_at) >= 0.25:
+            self._cached_stream_status = self.stream.status_snapshot()
+            self._last_stream_status_at = snapshot_at
+        stream_status = self._cached_stream_status
         status_lines = [
             f"online={stream_status['online']} backend={stream_status['backend'] or 'n/a'}",
             f"analysis_fps={self.camera_config.fps_analysis:.1f} detections={len(self._last_detections)}",
@@ -215,11 +246,17 @@ class CameraWorker(threading.Thread):
             status_lines.extend(self._behavior_status_lines[:1])
 
         zones: list[tuple[str, list[tuple[int, int]]]] = []
-        if self.camera_config.display.draw_zones:
+        if self.camera_config.display.draw_zones and self.camera_config.zones:
             height, width = frame.shape[:2]
-            for zone in self.camera_config.zones:
-                points = [(int(x), int(y)) for x, y in _scale_polygon(zone, width, height)]
-                zones.append((zone.name, points))
+            cache_key = (width, height)
+            cached = self._zones_cache.get(cache_key)
+            if cached is None:
+                cached = []
+                for zone in self.camera_config.zones:
+                    points = [(int(x), int(y)) for x, y in _scale_polygon(zone, width, height)]
+                    cached.append((zone.name, points))
+                self._zones_cache[cache_key] = cached
+            zones = cached
 
         annotated = render_monitor_frame(
             frame=frame,
@@ -283,6 +320,19 @@ class CameraWorker(threading.Thread):
     def _set_status(self, **updates: Any) -> None:
         with self._status_lock:
             self._status.update(updates)
+
+
+def _resolve_render_interval(configured_target_fps: float | None, display_camera_count: int) -> float:
+    if configured_target_fps is not None:
+        target_fps = max(5.0, min(60.0, float(configured_target_fps)))
+        return 1.0 / target_fps
+
+    # Fallback adaptativo para manter fluidez com muitas câmeras sem reduzir qualidade.
+    if display_camera_count <= 1:
+        return 1.0 / 30.0
+    if display_camera_count == 2:
+        return 1.0 / 24.0
+    return 1.0 / 20.0
 
 
 def _scale_polygon(zone: ZoneConfig, width: int, height: int) -> list[tuple[float, float]]:

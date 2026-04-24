@@ -27,15 +27,20 @@ agent/
   worker.py
 discovery/
   service.py
+display/
+  renderer.py
 events/
   emitter.py
 models/
   loader.py
+runtime/
+  tuning.py
 streams/
   rtsp_client.py
 utils/
   config.py
   logger.py
+  redaction.py
 legacy/
   smoking_demo.py
 ```
@@ -96,6 +101,12 @@ Para usar a interface desktop (GUI):
 
 ```bash
 python desktop_app.py
+```
+
+Para rodar os testes rápidos de configuração e segurança:
+
+```bash
+python -m unittest discover -s tests
 ```
 
 Para descobrir câmeras IP/local automaticamente e escolher uma no terminal:
@@ -160,4 +171,8 @@ Observações:
 - Zonas podem ser definidas em coordenadas normalizadas de `0.0` a `1.0`
 - O sistema está estruturado para crescer para APIs, filas externas, painel web e multi-tenant no futuro
 - `display` agora suporta modo profissional por câmera: `fullscreen`, `fit_mode` (`contain`/`cover`/`stretch`), `interpolation` e `enhance`
+- `display.target_fps` permite limitar FPS de renderização por câmera (recomendado `20-30` para estabilidade com 3+ câmeras)
+- O runtime aplica tuning automático de threads (OpenCV/ONNX/Torch CPU) para reduzir travamentos em multi-câmera sem perda de qualidade de detecção
+- O motor ONNX é compartilhado entre câmeras que usam o mesmo modelo, reduzindo memória e tempo de inicialização em instalações multi-câmera
+- URLs RTSP com usuário/senha são mascaradas em logs e mensagens de erro
 - Para múltiplas câmeras no mesmo host/NVR, o `id` de câmera é gerado a partir da `source` (stream) para evitar substituição indevida no `config.json`

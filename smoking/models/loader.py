@@ -5,6 +5,8 @@ import copy
 import hashlib
 import importlib
 import json
+import os
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +46,21 @@ class ModelSession:
 
     def clone_detection(self, detection: Detection) -> Detection:
         return copy.deepcopy(detection)
+
+
+@dataclass(slots=True)
+class _OnnxRuntimeEngine:
+    session: Any | None
+    net: Any | None
+    input_name: str | None
+    input_shape: Any
+    runtime_backend: str
+    class_names: tuple[str, ...]
+    thread_count: int | None = None
+
+
+_ONNX_ENGINE_LOCK = threading.Lock()
+_ONNX_RUNTIME_ENGINES: dict[tuple[Any, ...], _OnnxRuntimeEngine] = {}
 
 
 class UltralyticsModelSession(ModelSession):
@@ -155,31 +172,13 @@ class OnnxModelSession(ModelSession):
                 f"Modelo ONNX '{self.config.alias}' não encontrado em '{self.config.path}'."
             )
 
-        self._session: Any | None = None
-        self._net: Any | None = None
-        self._input_name: str | None = None
-        self._runtime_backend = "onnxruntime"
-
-        ort = _onnxruntime_module
-        if ort is not None:
-            providers = ["CPUExecutionProvider"]
-            self._session = ort.InferenceSession(str(self.config.path), providers=providers)
-            input_tensor = self._session.get_inputs()[0]
-            self._input_name = input_tensor.name
-            input_shape = input_tensor.shape
-            metadata_source = self._session
-        else:
-            self._runtime_backend = "opencv-dnn"
-            self._net = _load_opencv_dnn_onnx(self.config.path)
-            input_shape = None
-            metadata_source = None
-            self.logger.warning(
-                "onnxruntime_unavailable_using_opencv_dnn_fallback",
-                extra={"model_alias": self.config.alias, "model_path": str(self.config.path)},
-            )
-
-        self._input_h, self._input_w = _resolve_input_size(input_shape, self.config.input_size)
-        self._class_names = _resolve_onnx_class_names(metadata_source, self.config, self.logger)
+        engine = _get_onnx_runtime_engine(self.config, self.logger)
+        self._session = engine.session
+        self._net = engine.net
+        self._input_name = engine.input_name
+        self._runtime_backend = engine.runtime_backend
+        self._input_h, self._input_w = _resolve_input_size(engine.input_shape, self.config.input_size)
+        self._class_names = engine.class_names
         self._filters = {name.lower() for name in self.config.class_filters}
         self._tracker = _SimpleTracker(iou_threshold=0.35, max_stale_frames=45) if self.config.use_tracking else None
 
@@ -191,6 +190,7 @@ class OnnxModelSession(ModelSession):
                 "backend": self._runtime_backend,
                 "input_size": f"{self._input_w}x{self._input_h}",
                 "class_names": list(self._class_names),
+                "onnx_threads": engine.thread_count,
             },
         )
 
@@ -320,6 +320,95 @@ def _resolve_backend(model_config: ModelConfig) -> str:
     if model_config.path.suffix.lower() == ".onnx":
         return "onnx"
     return "ultralytics"
+
+
+def _get_onnx_runtime_engine(model_config: ModelConfig, logger: Any) -> _OnnxRuntimeEngine:
+    if _onnxruntime_module is None:
+        logger.warning(
+            "onnxruntime_unavailable_using_opencv_dnn_fallback",
+            extra={"model_alias": model_config.alias, "model_path": str(model_config.path)},
+        )
+        net = _load_opencv_dnn_onnx(model_config.path)
+        return _OnnxRuntimeEngine(
+            session=None,
+            net=net,
+            input_name=None,
+            input_shape=None,
+            runtime_backend="opencv-dnn",
+            class_names=_resolve_onnx_class_names(None, model_config, logger),
+        )
+
+    cache_key = _onnx_engine_cache_key(model_config)
+    with _ONNX_ENGINE_LOCK:
+        cached_engine = _ONNX_RUNTIME_ENGINES.get(cache_key)
+        if cached_engine is not None:
+            return cached_engine
+
+        engine = _create_onnxruntime_engine(model_config, logger)
+        _ONNX_RUNTIME_ENGINES[cache_key] = engine
+        return engine
+
+
+def _onnx_engine_cache_key(model_config: ModelConfig) -> tuple[Any, ...]:
+    path = model_config.path.resolve()
+    try:
+        stat = path.stat()
+        size = stat.st_size
+        modified_ns = stat.st_mtime_ns
+    except OSError:
+        size = 0
+        modified_ns = 0
+
+    normalized_names = tuple(str(name).strip().lower() for name in model_config.class_names)
+    return (
+        str(path).lower(),
+        size,
+        modified_ns,
+        model_config.input_size,
+        normalized_names,
+        _resolve_onnx_thread_count(),
+    )
+
+
+def _create_onnxruntime_engine(model_config: ModelConfig, logger: Any) -> _OnnxRuntimeEngine:
+    ort = _onnxruntime_module
+    if ort is None:  # pragma: no cover - guarded by caller
+        raise RuntimeError("onnxruntime não está disponível.")
+
+    thread_count = _resolve_onnx_thread_count()
+    session_options = ort.SessionOptions()
+    session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    session_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    session_options.intra_op_num_threads = thread_count
+    session_options.inter_op_num_threads = 1
+
+    session = ort.InferenceSession(
+        str(model_config.path),
+        sess_options=session_options,
+        providers=["CPUExecutionProvider"],
+    )
+    input_tensor = session.get_inputs()[0]
+    class_names = _resolve_onnx_class_names(session, model_config, logger)
+
+    logger.info(
+        "onnx_engine_loaded",
+        extra={
+            "model_alias": model_config.alias,
+            "model_path": str(model_config.path),
+            "onnx_threads": thread_count,
+            "class_names": list(class_names),
+        },
+    )
+
+    return _OnnxRuntimeEngine(
+        session=session,
+        net=None,
+        input_name=input_tensor.name,
+        input_shape=input_tensor.shape,
+        runtime_backend="onnxruntime",
+        class_names=class_names,
+        thread_count=thread_count,
+    )
 
 
 def _load_opencv_dnn_onnx(model_path: Path) -> Any:
@@ -719,3 +808,17 @@ def _parse_names_metadata(raw_names: Any) -> Any:
         return ast.literal_eval(text)
     except Exception:
         return None
+
+
+def _resolve_onnx_thread_count() -> int:
+    raw_value = os.getenv("STEALTH_LENS_ONNX_THREADS", "").strip()
+    try:
+        parsed = int(raw_value)
+    except Exception:
+        parsed = 0
+
+    if parsed > 0:
+        return max(1, min(16, parsed))
+
+    cpu_count = os.cpu_count() or 4
+    return max(1, min(6, cpu_count // 2))

@@ -10,6 +10,8 @@ from typing import Any
 
 import cv2
 
+from utils.redaction import redact_url_credentials
+
 try:
     import av
 except ImportError:  # pragma: no cover - optional dependency
@@ -137,7 +139,7 @@ class RTSPClient:
                     self.logger.warning(
                         "stream_connection_error",
                         extra={
-                            "source": str(self.source),
+                            "source": redact_url_credentials(self.source),
                             "error": str(exc),
                             "retry_in_seconds": delay,
                         },
@@ -167,7 +169,7 @@ class RTSPClient:
                 if self.logger:
                     self.logger.warning(
                         "pyav_unavailable_for_stream",
-                        extra={"source": self.source, "error": str(exc)},
+                        extra={"source": redact_url_credentials(self.source), "error": str(exc)},
                     )
 
         return _OpenCVReader(self.source)
@@ -226,7 +228,9 @@ class _OpenCVReader(_BaseReader):
             self.capture, self.backend_name = _open_local_capture(int(self.source))
 
         if not self.capture or not self.capture.isOpened():
-            raise StreamReadError(f"Não foi possível abrir o stream '{self.source}'.")
+            raise StreamReadError(
+                f"Não foi possível abrir o stream '{redact_url_credentials(self.source)}'."
+            )
 
         try:
             self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 2)
@@ -250,8 +254,10 @@ class _OpenCVReader(_BaseReader):
             time.sleep(0.02)
 
         if last_error is not None:
-            raise StreamReadError(f"Falha ao ler frame de '{self.source}': {last_error}") from last_error
-        raise StreamReadError(f"Falha ao ler frame de '{self.source}'.")
+            raise StreamReadError(
+                f"Falha ao ler frame de '{redact_url_credentials(self.source)}': {last_error}"
+            ) from last_error
+        raise StreamReadError(f"Falha ao ler frame de '{redact_url_credentials(self.source)}'.")
 
     def close(self) -> None:
         if self.capture is not None:
@@ -271,17 +277,22 @@ class _PyAVReader(_BaseReader):
         self.frames: Any | None = None
 
     def open(self) -> None:
-        self.container = av.open(
-            self.source,
-            options={
-                "rtsp_transport": "tcp",
-                "fflags": "nobuffer",
-                "flags": "low_delay",
-                "stimeout": "5000000",
-            },
-        )
-        self.video_stream = next(stream for stream in self.container.streams if stream.type == "video")
-        self.frames = self.container.decode(self.video_stream)
+        try:
+            self.container = av.open(
+                self.source,
+                options={
+                    "rtsp_transport": "tcp",
+                    "fflags": "nobuffer",
+                    "flags": "low_delay",
+                    "stimeout": "5000000",
+                },
+            )
+            self.video_stream = next(stream for stream in self.container.streams if stream.type == "video")
+            self.frames = self.container.decode(self.video_stream)
+        except Exception as exc:
+            raise StreamReadError(
+                f"Não foi possível abrir o stream '{redact_url_credentials(self.source)}' com PyAV."
+            ) from exc
 
     def read(self) -> Any:
         if self.frames is None:

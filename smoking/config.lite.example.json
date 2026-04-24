@@ -54,6 +54,7 @@
         "show_metrics": true,
         "draw_zones": true,
         "max_width": null,
+        "target_fps": 30,
         "fullscreen": false,
         "fit_mode": "contain",
         "interpolation": "auto",

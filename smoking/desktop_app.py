@@ -22,6 +22,7 @@ from discovery.service import (
 )
 from utils.config import build_default_raw_config, load_config, load_raw_config, save_raw_config
 from utils.logger import configure_logging, get_logger
+from utils.redaction import redact_url_credentials
 
 
 def _runtime_base_dir() -> Path:
@@ -74,9 +75,9 @@ def _camera_startup_failed(camera_status: dict[str, Any]) -> bool:
 class StealthLensDesktopApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("Stealth Lens Agent")
-        self.root.geometry("1080x700")
-        self.root.minsize(980, 620)
+        self.root.title("Stealth Lens")
+        self.root.geometry("1220x760")
+        self.root.minsize(1040, 680)
 
         self.runtime_base_dir = _runtime_base_dir()
         default_config = (self.runtime_base_dir / "config.json").resolve()
@@ -149,39 +150,70 @@ class StealthLensDesktopApp:
         return "Config criado automaticamente com padrão inicial."
 
     def _build_styles(self) -> None:
-        self.root.configure(bg="#0a1220")
+        self.root.configure(bg="#091321")
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("App.TFrame", background="#0a1220")
-        style.configure("Panel.TFrame", background="#13233a")
+        style.configure("App.TFrame", background="#091321")
+        style.configure("Panel.TFrame", background="#13253d")
         style.configure(
             "Title.TLabel",
-            background="#0a1220",
-            foreground="#e6f2ff",
-            font=("Segoe UI Semibold", 19),
+            background="#091321",
+            foreground="#eaf3ff",
+            font=("Segoe UI Semibold", 21),
         )
         style.configure(
             "Body.TLabel",
-            background="#13233a",
-            foreground="#d7e9ff",
+            background="#13253d",
+            foreground="#d8e8ff",
             font=("Segoe UI", 10),
         )
         style.configure(
             "Status.TLabel",
-            background="#0a1220",
-            foreground="#93c8ff",
+            background="#091321",
+            foreground="#8fc7ff",
             font=("Segoe UI", 10),
         )
-        style.configure("Action.TButton", font=("Segoe UI Semibold", 10), padding=(10, 8))
-        style.map("Action.TButton", background=[("active", "#3ca0e2")])
+        style.configure(
+            "Action.TButton",
+            font=("Segoe UI Semibold", 10),
+            padding=(12, 9),
+            background="#1d72d8",
+            foreground="#ffffff",
+            borderwidth=0,
+        )
+        style.map(
+            "Action.TButton",
+            background=[("active", "#2a8dff"), ("disabled", "#3b4f66")],
+            foreground=[("disabled", "#d0d7e3")],
+        )
+        style.configure(
+            "TEntry",
+            fieldbackground="#0f2137",
+            foreground="#dcedff",
+            insertcolor="#dcedff",
+            bordercolor="#2a3e58",
+            lightcolor="#2a3e58",
+            darkcolor="#2a3e58",
+        )
+        style.configure(
+            "TCheckbutton",
+            background="#13253d",
+            foreground="#d8e8ff",
+            font=("Segoe UI", 9),
+        )
         style.configure(
             "Treeview",
-            background="#0f1d30",
-            foreground="#d9ebff",
-            fieldbackground="#0f1d30",
+            background="#0e2035",
+            foreground="#e3f0ff",
+            fieldbackground="#0e2035",
             rowheight=28,
         )
-        style.configure("Treeview.Heading", font=("Segoe UI Semibold", 10), background="#1e3555", foreground="#eaf4ff")
+        style.configure(
+            "Treeview.Heading",
+            font=("Segoe UI Semibold", 10),
+            background="#203f64",
+            foreground="#f2f8ff",
+        )
 
     def _build_layout(self) -> None:
         wrapper = ttk.Frame(self.root, style="App.TFrame", padding=16)
@@ -192,7 +224,7 @@ class StealthLensDesktopApp:
 
         subtitle = ttk.Label(
             wrapper,
-            text="Fluxo simples: 1) Descobrir câmera  2) Salvar  3) Iniciar monitoramento",
+            text="Fluxo profissional: Descobrir -> Validar -> Salvar -> Monitorar",
             style="Status.TLabel",
         )
         subtitle.pack(anchor="w", pady=(0, 12))
@@ -200,14 +232,14 @@ class StealthLensDesktopApp:
         top_panel = ttk.Frame(wrapper, style="Panel.TFrame", padding=12)
         top_panel.pack(fill="x")
 
-        ttk.Label(top_panel, text="Arquivo de Configuração", style="Body.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(top_panel, text="Configuração Ativa", style="Body.TLabel").grid(row=0, column=0, sticky="w")
         config_entry = ttk.Entry(top_panel, textvariable=self.config_path_var, width=52)
         config_entry.grid(row=1, column=0, padx=(0, 8), sticky="we")
         top_panel.columnconfigure(0, weight=1)
 
         discover_button = ttk.Button(
             top_panel,
-            text="1. Descobrir",
+            text="1) Descobrir Câmeras",
             command=self._start_discovery,
             style="Action.TButton",
         )
@@ -216,7 +248,7 @@ class StealthLensDesktopApp:
 
         validate_button = ttk.Button(
             top_panel,
-            text="2. Validar",
+            text="2) Validar Stream",
             command=self._validate_selected_camera,
             style="Action.TButton",
         )
@@ -225,7 +257,7 @@ class StealthLensDesktopApp:
 
         save_button = ttk.Button(
             top_panel,
-            text="3. Salvar",
+            text="3) Salvar no Config",
             command=self._save_selected_camera,
             style="Action.TButton",
         )
@@ -241,7 +273,7 @@ class StealthLensDesktopApp:
         left_panel = ttk.Frame(content, style="Panel.TFrame", padding=10)
         left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
 
-        ttk.Label(left_panel, text="Câmeras Encontradas", style="Body.TLabel").pack(anchor="w")
+        ttk.Label(left_panel, text="Câmeras Disponíveis", style="Body.TLabel").pack(anchor="w")
         columns = ("tipo", "nome", "host", "rtsp")
         tree = ttk.Treeview(left_panel, columns=columns, show="headings", selectmode="browse", height=12)
         tree.heading("tipo", text="Tipo")
@@ -260,7 +292,7 @@ class StealthLensDesktopApp:
         right_panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
         right_panel.columnconfigure(0, weight=1)
 
-        ttk.Label(right_panel, text="Configuração da Câmera", style="Body.TLabel").grid(
+        ttk.Label(right_panel, text="Configuração Rápida", style="Body.TLabel").grid(
             row=0, column=0, sticky="w"
         )
         form = ttk.Frame(right_panel, style="Panel.TFrame")
@@ -277,7 +309,7 @@ class StealthLensDesktopApp:
 
         self.advanced_toggle_button = ttk.Button(
             form,
-            text="Mostrar Opções Avançadas",
+            text="Mostrar Opções Avançadas ▾",
             command=self._toggle_advanced,
             style="Action.TButton",
         )
@@ -316,7 +348,7 @@ class StealthLensDesktopApp:
 
         self.start_button = ttk.Button(
             controls,
-            text="Iniciar Monitoramento",
+            text="Iniciar",
             command=self._start_monitoring,
             style="Action.TButton",
         )
@@ -324,7 +356,7 @@ class StealthLensDesktopApp:
 
         self.stop_button = ttk.Button(
             controls,
-            text="Parar Monitoramento",
+            text="Parar",
             command=self._stop_monitoring,
             style="Action.TButton",
             state="disabled",
@@ -333,23 +365,23 @@ class StealthLensDesktopApp:
 
         self.save_start_button = ttk.Button(
             controls,
-            text="Salvar e Iniciar",
+            text="Salvar + Iniciar",
             command=self._save_and_start_selected_camera,
             style="Action.TButton",
         )
         self.save_start_button.grid(row=0, column=2, sticky="ew", padx=(6, 0))
 
-        log_label = ttk.Label(right_panel, text="Log Operacional", style="Body.TLabel")
+        log_label = ttk.Label(right_panel, text="Log em Tempo Real", style="Body.TLabel")
         log_label.grid(row=3, column=0, sticky="w")
 
         log_text = tk.Text(
             right_panel,
             height=14,
-            bg="#081425",
-            fg="#d6ebff",
-            insertbackground="#d6ebff",
+            bg="#0b1829",
+            fg="#ddedff",
+            insertbackground="#ddedff",
             relief="flat",
-            font=("Consolas", 10),
+            font=("Cascadia Code", 10),
             wrap="word",
         )
         log_text.grid(row=4, column=0, sticky="nsew", pady=(6, 0))
@@ -382,12 +414,12 @@ class StealthLensDesktopApp:
         if showing:
             self.advanced_frame.grid_remove()
             self.show_advanced_var.set(False)
-            self.advanced_toggle_button.configure(text="Mostrar Opções Avançadas")
+            self.advanced_toggle_button.configure(text="Mostrar Opções Avançadas ▾")
             return
 
         self.advanced_frame.grid()
         self.show_advanced_var.set(True)
-        self.advanced_toggle_button.configure(text="Ocultar Opções Avançadas")
+        self.advanced_toggle_button.configure(text="Ocultar Opções Avançadas ▴")
 
     def _save_and_start_selected_camera(self) -> None:
         if self._busy:
@@ -399,7 +431,7 @@ class StealthLensDesktopApp:
             return
         self._set_busy(True)
         self._set_status("Descobrindo câmeras na rede...")
-        self._append_log("Iniciando varredura ONVIF + RTSP + webcams locais.")
+        self._append_log("Iniciando varredura ONVIF + RTSP + HTTP + webcams locais.")
         threading.Thread(target=self._discover_worker, name="discover-worker", daemon=True).start()
 
     def _discover_worker(self) -> None:
@@ -641,9 +673,10 @@ class StealthLensDesktopApp:
             if payload.source is not None:
                 self._resolution_result_source = payload.source
                 status = "validada" if payload.validated else "resolvida sem validação"
-                self._set_status(f"Câmera {status}: {payload.source}")
-                self._append_log(f"Source selecionado: {payload.source}")
-                messagebox.showinfo("Stealth Lens", f"Source encontrado: {payload.source}")
+                redacted_source = redact_url_credentials(payload.source)
+                self._set_status(f"Câmera {status}: {redacted_source}")
+                self._append_log(f"Source selecionado: {redacted_source}")
+                messagebox.showinfo("Stealth Lens", f"Source encontrado: {redacted_source}")
             else:
                 self._set_status("Validação falhou.")
                 self._append_log(payload.error or "Falha na validação.")
@@ -653,7 +686,7 @@ class StealthLensDesktopApp:
         if event_name == "saved":
             self._set_status(f"Câmera salva em {payload['path']}")
             self._append_log(
-                f"Câmera '{payload['name']}' salva com source={payload['source']} "
+                f"Câmera '{payload['name']}' salva com source={redact_url_credentials(payload['source'])} "
                 f"(validated={payload['validated']})."
             )
             messagebox.showinfo(

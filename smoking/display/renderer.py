@@ -15,6 +15,7 @@ class DisplayFrame:
     camera_id: str
     window_name: str
     frame: Any
+    sequence: int = 0
     max_width: int | None = None
     fullscreen: bool = False
     fit_mode: str = "contain"
@@ -30,13 +31,17 @@ class _WindowState:
 
 
 class DisplayRenderer:
-    def __init__(self) -> None:
+    def __init__(self, max_loop_fps: float = 90.0) -> None:
         self._frames: dict[str, DisplayFrame] = {}
         self._windows: dict[str, _WindowState] = {}
+        self._last_presented_sequences: dict[str, int] = {}
+        self._submission_sequences: dict[str, int] = {}
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._user_stop_event = threading.Event()
         self._manual_fullscreen_override: bool | None = None
+        safe_loop_fps = max(15.0, min(144.0, float(max_loop_fps)))
+        self._frame_interval = 1.0 / safe_loop_fps
         self._screen_size = _primary_screen_size()
         self._thread = threading.Thread(target=self._loop, name="display-renderer", daemon=True)
 
@@ -65,10 +70,13 @@ class DisplayRenderer:
         enhance: bool = False,
     ) -> None:
         with self._lock:
+            sequence = int(self._submission_sequences.get(camera_id, 0)) + 1
+            self._submission_sequences[camera_id] = sequence
             self._frames[camera_id] = DisplayFrame(
                 camera_id=camera_id,
                 window_name=window_name,
                 frame=frame,
+                sequence=sequence,
                 max_width=max_width,
                 fullscreen=fullscreen,
                 fit_mode=fit_mode,
@@ -85,9 +93,12 @@ class DisplayRenderer:
         except Exception:
             pass
         self._windows.clear()
+        self._last_presented_sequences.clear()
+        self._submission_sequences.clear()
 
     def _loop(self) -> None:
         while not self._stop_event.is_set():
+            loop_started = time.perf_counter()
             with self._lock:
                 snapshot = list(self._frames.values())
 
@@ -104,7 +115,12 @@ class DisplayRenderer:
                     if self._manual_fullscreen_override is None
                     else self._manual_fullscreen_override
                 )
-                self._ensure_window(item.camera_id, item.window_name, effective_fullscreen)
+                geometry_changed = self._ensure_window(item.camera_id, item.window_name, effective_fullscreen)
+                if (
+                    not geometry_changed
+                    and self._last_presented_sequences.get(item.camera_id) == item.sequence
+                ):
+                    continue
                 frame = _prepare_display_frame(
                     frame=item.frame,
                     max_width=item.max_width,
@@ -115,6 +131,7 @@ class DisplayRenderer:
                     screen_size=self._screen_size,
                 )
                 cv2.imshow(item.window_name, frame)
+                self._last_presented_sequences[item.camera_id] = item.sequence
 
             key = cv2.waitKey(1) & 0xFF
             if key in {27, ord("q"), ord("Q")}:
@@ -124,8 +141,13 @@ class DisplayRenderer:
             if key in {ord("f"), ord("F")}:
                 self._toggle_fullscreen_override()
 
-    def _ensure_window(self, camera_id: str, window_name: str, fullscreen: bool) -> None:
+            elapsed = time.perf_counter() - loop_started
+            if elapsed < self._frame_interval:
+                time.sleep(min(self._frame_interval - elapsed, 0.02))
+
+    def _ensure_window(self, camera_id: str, window_name: str, fullscreen: bool) -> bool:
         state = self._windows.get(camera_id)
+        changed = False
 
         if state is not None and state.window_name != window_name:
             try:
@@ -133,11 +155,13 @@ class DisplayRenderer:
             except Exception:
                 pass
             state = None
+            changed = True
 
         if state is None:
             cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
             state = _WindowState(camera_id=camera_id, window_name=window_name)
             self._windows[camera_id] = state
+            changed = True
 
         if state.fullscreen_applied != fullscreen:
             try:
@@ -149,6 +173,9 @@ class DisplayRenderer:
             except Exception:
                 pass
             state.fullscreen_applied = fullscreen
+            changed = True
+
+        return changed
 
     def _destroy_stale_windows(self, active_camera_ids: set[str]) -> None:
         stale = [camera_id for camera_id in self._windows if camera_id not in active_camera_ids]
@@ -158,6 +185,8 @@ class DisplayRenderer:
                 cv2.destroyWindow(state.window_name)
             except Exception:
                 pass
+            self._last_presented_sequences.pop(camera_id, None)
+            self._submission_sequences.pop(camera_id, None)
 
     def _toggle_fullscreen_override(self) -> None:
         if self._manual_fullscreen_override is None:

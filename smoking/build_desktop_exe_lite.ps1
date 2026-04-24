@@ -71,6 +71,11 @@ $pyinstallerArgs += @("--add-data", "models/smoking_monitor.onnx;models")
 $pyinstallerArgs += @("--hidden-import", "onnxruntime")
 $pyinstallerArgs += @("--collect-binaries", "onnxruntime")
 $pyinstallerArgs += @("--collect-data", "onnxruntime")
+$pyinstallerArgs += @("--exclude-module", "torch")
+$pyinstallerArgs += @("--exclude-module", "torchvision")
+$pyinstallerArgs += @("--exclude-module", "ultralytics")
+$pyinstallerArgs += @("--exclude-module", "matplotlib")
+$pyinstallerArgs += @("--exclude-module", "scipy")
 
 $pyinstallerArgs += $EntryPoint
 & $PythonExe -m PyInstaller @pyinstallerArgs

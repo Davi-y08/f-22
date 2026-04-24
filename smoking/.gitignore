@@ -14,8 +14,8 @@ env/
 # Build / packaging
 build/
 dist/
-StealthLensDesktop.spec
-StealthLensDesktopLite.spec
+*.spec
+*.zip
 
 # Runtime output
 artifacts/
@@ -28,11 +28,18 @@ config.json
 .env.*
 
 # Local model binaries and exports
+*.pt
+*.pth
+*.onnx
+*.engine
 models/*.pt
 models/*.pth
 models/*.onnx
 models/*.engine
 models/*.bin
+
+# Training data and generated labels
+dataset/
 
 # Tool caches
 .pytest_cache/

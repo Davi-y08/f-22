@@ -44,6 +44,7 @@ class DisplayConfig:
     show_metrics: bool = True
     draw_zones: bool = True
     max_width: int | None = None
+    target_fps: float | None = None
     fullscreen: bool = False
     fit_mode: str = "contain"
     interpolation: str = "auto"
@@ -232,6 +233,7 @@ def build_camera_entry_from_template(
     display.setdefault("show_metrics", True)
     display.setdefault("draw_zones", True)
     display.setdefault("max_width", None)
+    display.setdefault("target_fps", 30)
     display.setdefault("fullscreen", False)
     display.setdefault("fit_mode", "contain")
     display.setdefault("interpolation", "auto")
@@ -398,6 +400,11 @@ def _load_display_config(raw: Any, camera_name: str, source: str | int) -> Displ
     if parsed_max_width is not None and parsed_max_width < 320:
         parsed_max_width = 320
 
+    target_fps = raw.get("target_fps", None)
+    parsed_target_fps = float(target_fps) if target_fps not in (None, "") else None
+    if parsed_target_fps is not None:
+        parsed_target_fps = max(5.0, min(60.0, parsed_target_fps))
+
     is_local_source = isinstance(source, int)
     return DisplayConfig(
         enabled=bool(raw.get("enabled", False)),
@@ -405,6 +412,7 @@ def _load_display_config(raw: Any, camera_name: str, source: str | int) -> Displ
         show_metrics=bool(raw.get("show_metrics", True)),
         draw_zones=bool(raw.get("draw_zones", True)),
         max_width=parsed_max_width,
+        target_fps=parsed_target_fps,
         fullscreen=bool(raw.get("fullscreen", False)),
         fit_mode=_normalize_fit_mode(raw.get("fit_mode", "contain")),
         interpolation=_normalize_interpolation(raw.get("interpolation", "auto")),
@@ -611,6 +619,7 @@ def _select_camera_template(raw_config: dict[str, Any]) -> dict[str, Any]:
             "show_metrics": True,
             "draw_zones": True,
             "max_width": None,
+            "target_fps": 30,
             "fullscreen": False,
             "fit_mode": "contain",
             "interpolation": "auto",
@@ -738,6 +747,7 @@ def _apply_runtime_camera_migrations(raw_config: dict[str, Any]) -> dict[str, An
         display.setdefault("fit_mode", "contain")
         display.setdefault("interpolation", "auto")
         display.setdefault("enhance", is_local_source)
+        display.setdefault("target_fps", 30)
         display.setdefault("fullscreen", False)
         display["fit_mode"] = _normalize_fit_mode(display.get("fit_mode"))
         display["interpolation"] = _normalize_interpolation(display.get("interpolation"))

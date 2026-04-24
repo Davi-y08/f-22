@@ -9,8 +9,10 @@ from urllib.parse import urlsplit
 from agent.worker import CameraWorker
 from display.renderer import DisplayRenderer
 from events.emitter import FileEventEmitter
+from runtime.tuning import apply_runtime_tuning
 from utils.config import AgentConfig
 from utils.logger import get_logger
+from utils.redaction import redact_url_credentials
 
 
 class AgentManager:
@@ -23,10 +25,18 @@ class AgentManager:
             snapshots_dir=self.config.storage.snapshots_dir,
             logger=self.logger,
         )
-        self.display_renderer = (
-            DisplayRenderer()
-            if any(camera.enabled and camera.display.enabled for camera in self.config.cameras)
-            else None
+        display_enabled_camera_count = sum(
+            1 for camera in self.config.cameras if camera.enabled and camera.display.enabled
+        )
+        self.display_renderer = DisplayRenderer(
+            max_loop_fps=90.0 if display_enabled_camera_count <= 2 else 60.0
+        ) if display_enabled_camera_count else None
+
+        enabled_camera_count = sum(1 for camera in self.config.cameras if camera.enabled)
+        apply_runtime_tuning(
+            enabled_camera_count=enabled_camera_count,
+            device_preference=self.config.device,
+            logger=self.logger,
         )
         self._stop_event = threading.Event()
         self._status_thread = threading.Thread(target=self._status_loop, name="status-writer", daemon=True)
@@ -43,7 +53,7 @@ class AgentManager:
                     extra={
                         "camera_id": camera_config.id,
                         "camera_name": camera_config.name,
-                        "source": str(camera_config.source),
+                        "source": redact_url_credentials(camera_config.source),
                         "existing_camera_id": seen_sources[source_key],
                     },
                 )
@@ -57,6 +67,7 @@ class AgentManager:
                     emitter=self.emitter,
                     logger=get_logger(f"stealth_lens.camera.{camera_config.id}"),
                     display_renderer=self.display_renderer,
+                    display_camera_count=display_enabled_camera_count,
                 )
             )
 
@@ -172,7 +183,10 @@ def _camera_source_key(source: Any) -> str:
 
     parsed = urlsplit(raw)
     host = (parsed.hostname or "").lower()
-    port = parsed.port or ""
+    try:
+        port = parsed.port or ""
+    except ValueError:
+        port = ""
     path = parsed.path or "/"
     query = parsed.query or ""
     if query:
