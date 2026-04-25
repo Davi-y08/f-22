@@ -274,16 +274,18 @@ class StealthLensDesktopApp:
         left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
 
         ttk.Label(left_panel, text="Câmeras Disponíveis", style="Body.TLabel").pack(anchor="w")
-        columns = ("tipo", "nome", "host", "rtsp")
+        columns = ("tipo", "status", "nome", "host", "streams")
         tree = ttk.Treeview(left_panel, columns=columns, show="headings", selectmode="browse", height=12)
         tree.heading("tipo", text="Tipo")
+        tree.heading("status", text="Status")
         tree.heading("nome", text="Nome")
         tree.heading("host", text="Host/Index")
-        tree.heading("rtsp", text="Streams")
+        tree.heading("streams", text="Streams")
         tree.column("tipo", width=80, anchor="center")
-        tree.column("nome", width=230, anchor="w")
+        tree.column("status", width=150, anchor="w")
+        tree.column("nome", width=210, anchor="w")
         tree.column("host", width=140, anchor="w")
-        tree.column("rtsp", width=120, anchor="w")
+        tree.column("streams", width=120, anchor="w")
         tree.pack(fill="both", expand=True, pady=(8, 6))
         tree.bind("<<TreeviewSelect>>", self._on_camera_selected)
         self.cameras_tree = tree
@@ -436,7 +438,7 @@ class StealthLensDesktopApp:
 
     def _discover_worker(self) -> None:
         try:
-            cameras = discover_cameras(logger=self.logger)
+            cameras = discover_cameras(logger=self.logger, use_cache=False)
             self._event_queue.put(("discovery-success", cameras))
         except Exception as exc:
             self._event_queue.put(("error", f"Falha na descoberta: {exc}"))
@@ -743,10 +745,14 @@ class StealthLensDesktopApp:
         self.cameras_tree.delete(*self.cameras_tree.get_children())
         for index, camera in enumerate(self._discovered):
             host_value = str(camera.local_index) if camera.kind == "local" else (camera.host or "")
+            status_label = self._camera_status_label(camera)
             stream_parts: list[str] = []
             if camera.rtsp_ports:
                 rtsp_ports = ",".join(str(port) for port in sorted(camera.rtsp_ports))
-                stream_parts.append(f"RTSP:{rtsp_ports}")
+                rtsp_label = f"RTSP:{rtsp_ports}"
+                if getattr(camera, "rtsp_stream_paths", []):
+                    rtsp_label += "/" + ",".join(camera.rtsp_stream_paths[:4])
+                stream_parts.append(rtsp_label)
             http_ports = getattr(camera, "http_ports", [])
             if http_ports:
                 http_ports_label = ",".join(str(port) for port in sorted(http_ports))
@@ -756,7 +762,7 @@ class StealthLensDesktopApp:
                 "",
                 "end",
                 iid=str(index),
-                values=(camera.kind, camera.name, host_value, streams_label),
+                values=(camera.kind, status_label, camera.name, host_value, streams_label),
             )
 
         if self._discovered:
@@ -766,6 +772,23 @@ class StealthLensDesktopApp:
             return
 
         self.selected_camera_var.set("Nenhuma câmera encontrada")
+
+    def _camera_status_label(self, camera: DiscoveredCamera) -> str:
+        labels = {
+            "online": "online",
+            "http_stream_detected": "HTTP stream OK",
+            "rtsp_stream_detected": "RTSP stream OK",
+            "rtsp_detected": "RTSP detectado",
+            "credentials_required": "precisa credencial",
+            "onvif_detected": "ONVIF detectado",
+            "http_camera_detected": "HTTP câmera",
+            "discovered": "descoberta",
+            "offline": "offline",
+        }
+        label = labels.get(camera.status, camera.status or "desconhecido")
+        if camera.confidence:
+            return f"{label} ({camera.confidence:.0%})"
+        return label
 
     def _dedupe_discovered(self, cameras: list[DiscoveredCamera]) -> list[DiscoveredCamera]:
         unique: list[DiscoveredCamera] = []
@@ -788,6 +811,8 @@ class StealthLensDesktopApp:
                 return f"local:{camera.local_index}"
             return f"local:{camera.key}:{camera.name}"
 
+        if camera.device_uuid:
+            return f"uuid:{camera.device_uuid}"
         host = (camera.host or "").lower()
         ports = ",".join(str(port) for port in sorted(camera.rtsp_ports))
         key = str(camera.key or "").lower()

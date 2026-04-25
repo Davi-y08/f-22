@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import os
 import queue
+import random
+import socket
 import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import cv2
 
@@ -136,15 +139,18 @@ class RTSPClient:
                     reconnect_attempts=int(status["reconnect_attempts"]) + 1,
                 )
                 if self.logger:
+                    retry_in_seconds = _jittered_delay(delay)
                     self.logger.warning(
                         "stream_connection_error",
                         extra={
                             "source": redact_url_credentials(self.source),
                             "error": str(exc),
-                            "retry_in_seconds": delay,
+                            "retry_in_seconds": round(retry_in_seconds, 2),
                         },
                     )
-                self._sleep_with_stop(delay)
+                else:
+                    retry_in_seconds = _jittered_delay(delay)
+                self._sleep_with_stop(retry_in_seconds)
                 delay = min(delay * 2, self.reconnect_max_delay)
             finally:
                 if reader is not None:
@@ -221,9 +227,9 @@ class _OpenCVReader(_BaseReader):
     def open(self) -> None:
         if isinstance(self.source, str):
             os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
-            self.capture = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
+            self.capture = _create_network_capture(self.source, cv2.CAP_FFMPEG)
             if not self.capture or not self.capture.isOpened():
-                self.capture = cv2.VideoCapture(self.source)
+                self.capture = _create_network_capture(self.source, None)
         else:
             self.capture, self.backend_name = _open_local_capture(int(self.source))
 
@@ -324,6 +330,11 @@ def test_stream_source(
             if capture is not None:
                 capture.release()
 
+    if _is_rtsp_source(source):
+        rtsp_status = _quick_rtsp_describe(source, timeout_seconds=min(timeout_seconds, 1.5))
+        if rtsp_status is not None:
+            return rtsp_status
+
     preference = backend_preference.lower()
     if preference in {"auto", "pyav"} and av is not None:
         try:
@@ -360,6 +371,60 @@ def test_stream_source(
     finally:
         if capture is not None:
             capture.release()
+
+
+def _is_rtsp_source(source: Any) -> bool:
+    if not isinstance(source, str):
+        return False
+    return urlsplit(source).scheme.lower() in {"rtsp", "rtsps"}
+
+
+def _quick_rtsp_describe(source: str, timeout_seconds: float) -> bool | None:
+    """Validate an RTSP URL with a protocol-level DESCRIBE before opening a decoder.
+
+    OpenCV/PyAV can take many seconds to give up on some RTSP URLs. A short
+    DESCRIBE is enough for source selection because the monitoring worker will
+    still verify actual frame delivery when it starts.
+    """
+
+    parsed = urlsplit(source)
+    host = parsed.hostname
+    if not host:
+        return False
+
+    port = parsed.port or (322 if parsed.scheme.lower() == "rtsps" else 554)
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+
+    authority = host
+    if parsed.port:
+        authority = f"{authority}:{parsed.port}"
+    request_url = urlunsplit((parsed.scheme, authority, path, "", ""))
+    request = (
+        f"DESCRIBE {request_url} RTSP/1.0\r\n"
+        "CSeq: 1\r\n"
+        "Accept: application/sdp\r\n"
+        "User-Agent: StealthLens/1.0\r\n\r\n"
+    ).encode("utf-8", errors="ignore")
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout_seconds) as connection:
+            connection.settimeout(timeout_seconds)
+            connection.sendall(request)
+            response = connection.recv(2048).decode("utf-8", errors="ignore")
+    except OSError:
+        return None
+
+    first_line = response.splitlines()[0] if response.splitlines() else ""
+    upper_line = first_line.upper()
+    if " 200 " in f" {upper_line} " or upper_line.endswith(" 200 OK"):
+        return True
+    if " 401 " in f" {upper_line} " or "UNAUTHORIZED" in upper_line:
+        return None if parsed.username else False
+    if " 404 " in f" {upper_line} " or "NOT FOUND" in upper_line:
+        return False
+    return None
 
 
 def _open_local_capture(source_index: int) -> tuple[cv2.VideoCapture, str]:
@@ -419,6 +484,35 @@ def _create_local_capture(source_index: int, backend_id: int | None) -> cv2.Vide
         return cv2.VideoCapture(source_index, backend_id)
     except Exception:
         return None
+
+
+def _create_network_capture(source: str, backend_id: int | None) -> cv2.VideoCapture | None:
+    params: list[int] = []
+    open_timeout = getattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC", None)
+    read_timeout = getattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC", None)
+    if isinstance(open_timeout, int):
+        params.extend([open_timeout, 5000])
+    if isinstance(read_timeout, int):
+        params.extend([read_timeout, 5000])
+
+    try:
+        if params and backend_id is not None:
+            return cv2.VideoCapture(source, backend_id, params)
+        if backend_id is not None:
+            return cv2.VideoCapture(source, backend_id)
+        return cv2.VideoCapture(source)
+    except Exception:
+        try:
+            if backend_id is not None:
+                return cv2.VideoCapture(source, backend_id)
+            return cv2.VideoCapture(source)
+        except Exception:
+            return None
+
+
+def _jittered_delay(base_delay: float) -> float:
+    jitter = random.uniform(0.85, 1.25)
+    return max(0.2, base_delay * jitter)
 
 
 def _apply_capture_profile(

@@ -15,6 +15,7 @@ Agente local profissional para monitoramento de múltiplas câmeras RTSP com vis
 - Confirma tabagismo por associação temporal entre `person`, `cigarette` e `smoke`
 - Descobre automaticamente câmeras na rede por ONVIF/RTSP e permite escolher no terminal
 - Descobre automaticamente câmeras HTTP compatíveis com IP Webcam (ex.: `http://<ip>:8080/video`)
+- Classifica o estado de descoberta (`ONVIF detectado`, `RTSP detectado`, `precisa credencial`, `HTTP stream OK`)
 
 ## Estrutura
 
@@ -175,4 +176,6 @@ Observações:
 - O runtime aplica tuning automático de threads (OpenCV/ONNX/Torch CPU) para reduzir travamentos em multi-câmera sem perda de qualidade de detecção
 - O motor ONNX é compartilhado entre câmeras que usam o mesmo modelo, reduzindo memória e tempo de inicialização em instalações multi-câmera
 - URLs RTSP com usuário/senha são mascaradas em logs e mensagens de erro
+- A descoberta de câmeras usa cache curto, varredura concorrente com timeouts e evita repetir testes de stream validados recentemente
+- URLs manuais são validadas antes do teste de conexão para bloquear esquemas inválidos, loopback e endpoints perigosos
 - Para múltiplas câmeras no mesmo host/NVR, o `id` de câmera é gerado a partir da `source` (stream) para evitar substituição indevida no `config.json`
