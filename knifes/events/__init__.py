@@ -1,0 +1,2 @@
+"""Event generation and persistence."""
+
