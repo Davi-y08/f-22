@@ -43,7 +43,7 @@ function ContactPage() {
       <PageHeader
         eyebrow="Contato"
         title="Fale com a equipe Stealth Lens."
-        description="Use este canal para conversas comerciais, duvidas sobre implantacao ou proximos passos do produto."
+        description="Use este canal para conversas comerciais, duvidas sobre implantação ou próximos passos do produto."
       />
 
       <div className="mx-auto grid max-w-7xl gap-6 px-4 pb-12 sm:px-6 lg:grid-cols-[0.9fr_1.1fr]">

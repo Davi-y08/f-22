@@ -5,18 +5,18 @@ import Panel from "../components/ui/Panel";
 const values = [
   {
     icon: ShieldCheck,
-    title: "Seguranca no centro",
-    text: "A interface foi pensada para equipes que precisam agir com clareza, sem excesso visual competindo com informacoes importantes.",
+    title: "Segurança no centro",
+    text: "A interface foi pensada para equipes que precisam agir com clareza, sem excesso visual competindo com informações importantes.",
   },
   {
     icon: Activity,
     title: "Rotina em tempo real",
-    text: "O produto conversa com o contexto de cameras ativas, estados operacionais e sinais que pedem acompanhamento constante.",
+    text: "O produto conversa com o contexto de câmeras ativas, estados operacionais e sinais que pedem acompanhamento constante.",
   },
   {
     icon: HeartHandshake,
     title: "Mais humano",
-    text: "A experiencia prioriza textos diretos, controles previsiveis e uma leitura mais tranquila para a equipe.",
+    text: "A experiência prioriza textos diretos, controles previsiveis e uma leitura mais tranquila para a equipe.",
   },
   {
     icon: Boxes,
@@ -30,22 +30,22 @@ function AboutPage() {
     <>
       <PageHeader
         eyebrow="Sobre"
-        title="Uma plataforma de visao computacional com cara de produto."
-        description="Stealth Lens organiza cameras e sinais de vigilancia em uma experiencia escura, discreta e mais facil de operar no dia a dia."
+        title="Uma plataforma de visão computacional com cara de produto."
+        description="Stealth Lens organiza câmeras e sinais de vigilância em uma experiência escura, discreta e mais facil de operar no dia a dia."
       />
 
       <div className="mx-auto grid max-w-7xl gap-6 px-4 pb-12 sm:px-6 lg:grid-cols-[0.95fr_1.05fr]">
         <Panel title="Identidade" description="Visao do produto e sua proposta operacional.">
           <div className="flex flex-col gap-5 text-base leading-8 text-slate-400">
             <p>
-              Stealth Lens nasce para ambientes que ja convivem com cameras,
-              alertas e decisoes rapidas. A proposta e aproximar esses sinais
-              de uma rotina clara, confiavel e facil de acompanhar.
+              Stealth Lens nasce para ambientes que já convivem com cameras,
+              alertas e decisões rápidas. A proposta e aproximar esses sinais
+              de uma rotina clara, confiável e facil de acompanhar.
             </p>
             <p>
-              A plataforma combina organizacao de pontos de monitoramento com
-              uma base preparada para visao computacional, automacao e expansao
-              por cenarios.
+              A plataforma combina organização de pontos de monitoramento com
+              uma base preparada para visão computacional, automação e expansão
+              por cenários.
             </p>
           </div>
         </Panel>

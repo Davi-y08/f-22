@@ -244,7 +244,7 @@ function LoginCadastroPage({ initialMode }: LoginCadastroPageProps) {
               label="Nome"
               name="name"
               onChange={updateSignupField}
-              placeholder="Nome da pessoa responsavel"
+              placeholder="Nome da pessoa responsável"
               required
               value={signupForm.name}
             />
