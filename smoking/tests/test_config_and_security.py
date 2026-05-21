@@ -65,6 +65,31 @@ class ConfigLoadingTests(unittest.TestCase):
 
         self.assertEqual(config.cameras[0].display.target_fps, 60.0)
 
+    def test_cloud_config_keeps_empty_access_key_slot(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "agent_id": "test-agent",
+                        "cloud": {
+                            "enabled": True,
+                            "api_base_url": "http://localhost:8080/",
+                            "agent_access_key": "",
+                        },
+                        "model_catalog": {},
+                        "cameras": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+        self.assertTrue(config.cloud.enabled)
+        self.assertEqual(config.cloud.api_base_url, "http://localhost:8080")
+        self.assertEqual(config.cloud.agent_access_key, "")
+
 
 if __name__ == "__main__":
     unittest.main()

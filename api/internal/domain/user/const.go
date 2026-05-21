@@ -1,5 +1,5 @@
 package user
 
-const(
+const (
 	DefaultRole = "default_user"
 )

@@ -102,12 +102,23 @@ class StorageConfig:
 
 
 @dataclass(frozen=True)
+class CloudConfig:
+    enabled: bool = False
+    api_base_url: str = ""
+    agent_access_key: str = ""
+    sync_discovered_cameras: bool = True
+    sync_events: bool = True
+    timeout_seconds: float = 8.0
+
+
+@dataclass(frozen=True)
 class AgentConfig:
     agent_id: str
     base_dir: Path
     device: str
     logging: LoggingConfig
     storage: StorageConfig
+    cloud: CloudConfig
     model_catalog: dict[str, ModelConfig] = field(default_factory=dict)
     cameras: tuple[CameraConfig, ...] = ()
     status_interval_seconds: float = 15.0
@@ -122,6 +133,7 @@ def load_config(config_path: str | Path) -> AgentConfig:
     raw = _apply_runtime_camera_migrations(raw)
     logging_cfg = _load_logging_config(raw.get("logging", {}))
     storage_cfg = _load_storage_config(base_dir, raw.get("storage", {}))
+    cloud_cfg = _load_cloud_config(raw.get("cloud", {}))
     model_catalog = _load_model_catalog(base_dir, raw.get("model_catalog", {}))
 
     cameras_raw = raw.get("cameras", [])
@@ -143,6 +155,7 @@ def load_config(config_path: str | Path) -> AgentConfig:
         device=device,
         logging=logging_cfg,
         storage=storage_cfg,
+        cloud=cloud_cfg,
         model_catalog=model_catalog,
         cameras=cameras,
         status_interval_seconds=status_interval_seconds,
@@ -274,6 +287,14 @@ def build_default_raw_config() -> dict[str, Any]:
             "snapshots_dir": "artifacts/snapshots",
             "status_path": "artifacts/status/agent-status.json",
         },
+        "cloud": {
+            "enabled": False,
+            "api_base_url": "",
+            "agent_access_key": "",
+            "sync_discovered_cameras": True,
+            "sync_events": True,
+            "timeout_seconds": 8,
+        },
         "model_catalog": _default_model_catalog(),
         "cameras": [],
     }
@@ -291,6 +312,22 @@ def _load_storage_config(base_dir: Path, raw: dict[str, Any]) -> StorageConfig:
         events_dir=_resolve_path(base_dir, raw.get("events_dir", "artifacts/events")),
         snapshots_dir=_resolve_path(base_dir, raw.get("snapshots_dir", "artifacts/snapshots")),
         status_path=_resolve_path(base_dir, raw.get("status_path", "artifacts/status/agent-status.json")),
+    )
+
+
+def _load_cloud_config(raw: Any) -> CloudConfig:
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValueError("'cloud' deve ser um objeto JSON.")
+
+    return CloudConfig(
+        enabled=bool(raw.get("enabled", False)),
+        api_base_url=str(raw.get("api_base_url", "")).strip().rstrip("/"),
+        agent_access_key=str(raw.get("agent_access_key", "")).strip(),
+        sync_discovered_cameras=bool(raw.get("sync_discovered_cameras", True)),
+        sync_events=bool(raw.get("sync_events", True)),
+        timeout_seconds=max(2.0, min(30.0, float(raw.get("timeout_seconds", 8.0)))),
     )
 
 
@@ -804,7 +841,7 @@ def _apply_raw_defaults(raw_config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw.get("cameras"), list):
         raw["cameras"] = []
 
-    for key in ("agent_id", "device", "status_interval_seconds", "logging", "storage"):
+    for key in ("agent_id", "device", "status_interval_seconds", "logging", "storage", "cloud"):
         raw.setdefault(key, copy.deepcopy(defaults[key]))
 
     raw_model_catalog: dict[str, Any] = raw["model_catalog"]

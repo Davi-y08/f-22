@@ -16,6 +16,7 @@ Agente local profissional para monitoramento de múltiplas câmeras RTSP com vis
 - Descobre automaticamente câmeras na rede por ONVIF/RTSP e permite escolher no terminal
 - Descobre automaticamente câmeras HTTP compatíveis com IP Webcam (ex.: `http://<ip>:8080/video`)
 - Classifica o estado de descoberta (`ONVIF detectado`, `RTSP detectado`, `precisa credencial`, `HTTP stream OK`)
+- Sincroniza câmeras descobertas e eventos detectados com a API/site usando uma chave exclusiva do distribuído
 
 ## Estrutura
 
@@ -32,6 +33,8 @@ display/
   renderer.py
 events/
   emitter.py
+cloud/
+  client.py
 models/
   loader.py
 runtime/
@@ -78,6 +81,33 @@ O `main.py` carrega `config.json` por padrão. Neste momento ele vem pronto para
 Depois ajuste conforme necessário:
 
 - `model_catalog`: define caminhos, classes e thresholds por modelo
+
+### Conexão com API/site
+
+O distribuído agora possui um bloco `cloud` no `config.json` para vincular o agente local ao usuário do site sem exigir login no app instalado no cliente:
+
+```json
+{
+  "cloud": {
+    "enabled": false,
+    "api_base_url": "",
+    "agent_access_key": "",
+    "sync_discovered_cameras": true,
+    "sync_events": true,
+    "timeout_seconds": 8
+  }
+}
+```
+
+Fluxo recomendado:
+
+1. O usuário faz login no site.
+2. O site gera uma chave do distribuído pela API.
+3. Essa chave é colada no campo `Chave do Distribuído` do app desktop.
+4. Ao descobrir/salvar câmeras, o distribuído chama `POST /agent/cameras/sync`.
+5. Ao detectar eventos, o distribuído chama `POST /agent/events`.
+
+As credenciais RTSP não são enviadas para a API; o distribuído remove usuário/senha das URLs antes de sincronizar.
 - `cameras`: define RTSP, FPS de análise, zonas e modelos ativos por câmera
 - `smoking_behavior`: define a heurística profissional de tabagismo por tracking e associação espacial
 - `storage`: define onde eventos, snapshots e status serão gravados

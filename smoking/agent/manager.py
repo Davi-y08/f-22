@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from agent.worker import CameraWorker
+from cloud.client import CloudClient
 from display.renderer import DisplayRenderer
 from events.emitter import FileEventEmitter
 from runtime.tuning import apply_runtime_tuning
@@ -19,11 +20,17 @@ class AgentManager:
     def __init__(self, config: AgentConfig) -> None:
         self.config = config
         self.logger = get_logger("stealth_lens.manager")
+        self.cloud_client = (
+            CloudClient(self.config.cloud, agent_id=self.config.agent_id, logger=self.logger)
+            if self.config.cloud.enabled
+            else None
+        )
         self.emitter = FileEventEmitter(
             agent_id=self.config.agent_id,
             events_dir=self.config.storage.events_dir,
             snapshots_dir=self.config.storage.snapshots_dir,
             logger=self.logger,
+            cloud_client=self.cloud_client,
         )
         display_enabled_camera_count = sum(
             1 for camera in self.config.cameras if camera.enabled and camera.display.enabled

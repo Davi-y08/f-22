@@ -1,0 +1,139 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Length 4105 >>
+stream
+BT
+/F1 9 Tf
+1 0 0 1 0 0 Tm
+1 0 0 1 48 800.0 Tm (RELATORIO RESUMIDO - CAMERAS DA API STEALTH LENS) Tj
+1 0 0 1 48 789.0 Tm (Data: 19/05/2026) Tj
+1 0 0 1 48 778.0 Tm () Tj
+1 0 0 1 48 767.0 Tm (OBJETIVO) Tj
+1 0 0 1 48 756.0 Tm (Foi implementado na pasta `API` um modulo de cameras seguindo o padrao da API `ping-health`: separacao em ) Tj
+1 0 0 1 48 745.0 Tm (`domain`, `application`, `repository`, `http`, `infra` e `httpx`. O foco foi deixar a base pronta para ) Tj
+1 0 0 1 48 734.0 Tm (cadastrar, listar, atualizar e remover cameras de forma autenticada e organizada.) Tj
+1 0 0 1 48 723.0 Tm () Tj
+1 0 0 1 48 712.0 Tm (O QUE FOI IMPLEMENTADO) Tj
+1 0 0 1 48 701.0 Tm (Rotas protegidas por JWT:) Tj
+1 0 0 1 48 690.0 Tm (  - `POST /cameras`: cria camera.) Tj
+1 0 0 1 48 679.0 Tm (  - `GET /cameras`: lista cameras do usuario autenticado.) Tj
+1 0 0 1 48 668.0 Tm (  - `GET /cameras/{id}`: busca camera por ID.) Tj
+1 0 0 1 48 657.0 Tm (  - `PUT /cameras/{id}`: atualiza camera.) Tj
+1 0 0 1 48 646.0 Tm (  - `DELETE /cameras/{id}`: remove camera.) Tj
+1 0 0 1 48 635.0 Tm (O middleware JWT valida o cookie `access_token`, extrai o `user_id` do token e coloca esse valor no contexto da ) Tj
+1 0 0 1 48 624.0 Tm (requisicao. Todas as operacoes de camera usam esse `user_id`, entao um usuario nao consegue acessar cameras de ) Tj
+1 0 0 1 48 613.0 Tm (outro usuario.) Tj
+1 0 0 1 48 602.0 Tm () Tj
+1 0 0 1 48 591.0 Tm (MODEL PERSISTIDO NO BANCO) Tj
+1 0 0 1 48 580.0 Tm (Arquivo: `internal/domain/camera/model.go`) Tj
+1 0 0 1 48 569.0 Tm (    type Camera struct {) Tj
+1 0 0 1 48 558.0 Tm (        ID        uuid.UUID) Tj
+1 0 0 1 48 547.0 Tm (        Name      string) Tj
+1 0 0 1 48 536.0 Tm (        Location  string) Tj
+1 0 0 1 48 525.0 Tm (        URL       string) Tj
+1 0 0 1 48 514.0 Tm (        Status    string) Tj
+1 0 0 1 48 503.0 Tm (        UserID    uuid.UUID) Tj
+1 0 0 1 48 492.0 Tm (        User      user.User) Tj
+1 0 0 1 48 481.0 Tm (        CreatedAt time.Time) Tj
+1 0 0 1 48 470.0 Tm (        UpdatedAt time.Time) Tj
+1 0 0 1 48 459.0 Tm (    }) Tj
+1 0 0 1 48 448.0 Tm (Tabela criada pelo GORM: `cameras`) Tj
+1 0 0 1 48 437.0 Tm (Campos principais:) Tj
+1 0 0 1 48 426.0 Tm (  - `id`: UUID da camera.) Tj
+1 0 0 1 48 415.0 Tm (  - `name`: nome da camera.) Tj
+1 0 0 1 48 404.0 Tm (  - `location`: localizacao.) Tj
+1 0 0 1 48 393.0 Tm (  - `url`: IP ou URL da camera.) Tj
+1 0 0 1 48 382.0 Tm (  - `status`: `unknown`, `online` ou `offline`.) Tj
+1 0 0 1 48 371.0 Tm (  - `user_id`: dono da camera.) Tj
+1 0 0 1 48 360.0 Tm (  - `created_at` e `updated_at`: datas automaticas.) Tj
+1 0 0 1 48 349.0 Tm (Relacionamento: uma `Camera` pertence a um `User`, e um `User` pode ter varias cameras.) Tj
+1 0 0 1 48 338.0 Tm () Tj
+1 0 0 1 48 327.0 Tm (CAMADAS CRIADAS) Tj
+1 0 0 1 48 316.0 Tm (Application) Tj
+1 0 0 1 48 305.0 Tm (Arquivos:) Tj
+1 0 0 1 48 294.0 Tm (  - `internal/application/camera/dto.go`) Tj
+1 0 0 1 48 283.0 Tm (  - `internal/application/camera/service.go`) Tj
+1 0 0 1 48 272.0 Tm (Metodos principais:) Tj
+1 0 0 1 48 261.0 Tm (  - `CreateCameraService`) Tj
+1 0 0 1 48 250.0 Tm (  - `ListCamerasService`) Tj
+1 0 0 1 48 239.0 Tm (  - `GetCameraByIDService`) Tj
+1 0 0 1 48 228.0 Tm (  - `UpdateCameraService`) Tj
+1 0 0 1 48 217.0 Tm (  - `DeleteCameraService`) Tj
+1 0 0 1 48 206.0 Tm (Validacoes:) Tj
+1 0 0 1 48 195.0 Tm (  - nome e localizacao obrigatorios;) Tj
+1 0 0 1 48 184.0 Tm (  - fonte da camera obrigatoria;) Tj
+1 0 0 1 48 173.0 Tm (  - aceita IP puro;) Tj
+1 0 0 1 48 162.0 Tm (  - aceita `rtsp`, `rtsps`, `http` e `https`;) Tj
+1 0 0 1 48 151.0 Tm (  - status limitado a `unknown`, `online` e `offline`.) Tj
+1 0 0 1 48 140.0 Tm (Repository) Tj
+1 0 0 1 48 129.0 Tm (Arquivo: `internal/repository/camera_repository.go`) Tj
+1 0 0 1 48 118.0 Tm (Metodos:) Tj
+1 0 0 1 48 107.0 Tm (  - `CreateCamera`) Tj
+1 0 0 1 48 96.0 Tm (  - `GetCamerasByUser`) Tj
+1 0 0 1 48 85.0 Tm (  - `GetCameraByID`) Tj
+1 0 0 1 48 74.0 Tm (  - `UpdateCamera`) Tj
+1 0 0 1 48 63.0 Tm (  - `DeleteCamera`) Tj
+1 0 0 1 48 52.0 Tm (As consultas sensiveis filtram por `camera_id` e `user_id`, garantindo isolamento por usuario.) Tj
+ET
+endstream
+endobj
+3 0 obj
+<< /Type /Page /Parent 6 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 2 0 R >>
+endobj
+4 0 obj
+<< /Length 1365 >>
+stream
+BT
+/F1 9 Tf
+1 0 0 1 0 0 Tm
+1 0 0 1 48 800.0 Tm (HTTP Handler) Tj
+1 0 0 1 48 789.0 Tm (Arquivo: `internal/http/handlers/camera.go`) Tj
+1 0 0 1 48 778.0 Tm (Metodos:) Tj
+1 0 0 1 48 767.0 Tm (  - `CreateCameraHandler`) Tj
+1 0 0 1 48 756.0 Tm (  - `ListCamerasHandler`) Tj
+1 0 0 1 48 745.0 Tm (  - `GetCameraHandler`) Tj
+1 0 0 1 48 734.0 Tm (  - `UpdateCameraHandler`) Tj
+1 0 0 1 48 723.0 Tm (  - `DeleteCameraHandler`) Tj
+1 0 0 1 48 712.0 Tm (Responsabilidade: receber JSON, recuperar usuario autenticado, validar ID da camera, chamar o service e retornar) Tj
+1 0 0 1 48 701.0 Tm ( a resposta HTTP.) Tj
+1 0 0 1 48 690.0 Tm () Tj
+1 0 0 1 48 679.0 Tm (BANCO E MIGRATIONS) Tj
+1 0 0 1 48 668.0 Tm (Arquivo: `internal/infra/database/migration.go`) Tj
+1 0 0 1 48 657.0 Tm (Ao iniciar a API, o sistema executa:) Tj
+1 0 0 1 48 646.0 Tm (    db.AutoMigrate\(&user.User{}, &camera.Camera{}\)) Tj
+1 0 0 1 48 635.0 Tm (Com isso, o GORM cria ou atualiza as tabelas `users` e `cameras` no PostgreSQL.) Tj
+1 0 0 1 48 624.0 Tm () Tj
+1 0 0 1 48 613.0 Tm (RESULTADO) Tj
+1 0 0 1 48 602.0 Tm (O modulo de cameras ficou funcional, autenticado e alinhado ao estilo da `ping-health`. A base agora esta pronta) Tj
+1 0 0 1 48 591.0 Tm ( para evoluir para status real online/offline, descoberta automatica de cameras, integracao com o agente local e) Tj
+1 0 0 1 48 580.0 Tm ( dashboards.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 6 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>
+endobj
+7 0 obj
+<< /Type /Catalog /Pages 6 0 R >>
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000009 00000 n 
+0000000079 00000 n 
+0000004236 00000 n 
+0000004362 00000 n 
+0000005779 00000 n 
+0000005905 00000 n 
+0000005968 00000 n 
+trailer
+<< /Size 8 /Root 7 0 R >>
+startxref
+6017
+%%EOF

@@ -11,6 +11,14 @@
     "snapshots_dir": "artifacts/snapshots",
     "status_path": "artifacts/status/agent-status.json"
   },
+  "cloud": {
+    "enabled": false,
+    "api_base_url": "",
+    "agent_access_key": "",
+    "sync_discovered_cameras": true,
+    "sync_events": true,
+    "timeout_seconds": 8
+  },
   "model_catalog": {
     "smoking_monitor": {
       "path": "models/smoking_monitor.onnx",

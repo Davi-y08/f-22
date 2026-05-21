@@ -61,11 +61,19 @@ class DetectionEvent:
 
 
 class FileEventEmitter:
-    def __init__(self, agent_id: str, events_dir: Path, snapshots_dir: Path, logger: Any | None = None) -> None:
+    def __init__(
+        self,
+        agent_id: str,
+        events_dir: Path,
+        snapshots_dir: Path,
+        logger: Any | None = None,
+        cloud_client: Any | None = None,
+    ) -> None:
         self.agent_id = agent_id
         self.events_dir = events_dir
         self.snapshots_dir = snapshots_dir
         self.logger = logger
+        self.cloud_client = cloud_client
         self._lock = threading.Lock()
 
         self.events_dir.mkdir(parents=True, exist_ok=True)
@@ -93,9 +101,14 @@ class FileEventEmitter:
         if self.logger:
             self.logger.info("event_emitted", extra={"event_payload": payload})
 
+        if self.cloud_client is not None:
+            self.cloud_client.emit_event_async(event)
+
         return event
 
     def close(self) -> None:
+        if self.cloud_client is not None:
+            self.cloud_client.close()
         return
 
     def _save_snapshot(self, event: DetectionEvent, frame: Any) -> str:
