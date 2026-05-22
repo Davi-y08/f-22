@@ -21,7 +21,7 @@ import FormField from "../components/ui/FormField";
 import PageHeader from "../components/ui/PageHeader";
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
-import { API_BASE_URL } from "../config/api";
+import { API_BASE_URL, DEFAULT_API_BASE_URL } from "../config/api";
 import { agentKeyApi, authApi, cameraApi, getErrorMessage } from "../lib/apiClient";
 import type { AgentAccessKey, UserProfile } from "../lib/apiClient";
 import type { Camera, CameraPayload, CameraStatus } from "../types/camera";
@@ -93,17 +93,22 @@ function validateCameraForm(payload: CameraPayload) {
     errors.push("Informe o local da câmera.");
   }
 
-  if (!isValidCameraSource(payload.url)) {
-    errors.push(
-      "Informe uma origem válida: IP, local://0, rtsp://, rtsps://, http:// ou https://.",
-    );
-  }
-
   if (!validCameraStatuses.includes(payload.status)) {
     errors.push("Selecione um status válido para a câmera.");
   }
 
   return errors;
+}
+
+function normalizeCameraPayload(payload: CameraPayload): CameraPayload {
+  const trimmedUrl = payload.url.trim();
+
+  return {
+    location: payload.location.trim(),
+    name: payload.name.trim(),
+    status: payload.status,
+    url: isValidCameraSource(trimmedUrl) ? trimmedUrl : DEFAULT_API_BASE_URL,
+  };
 }
 
 function formatCameraSubmitError(error: unknown) {
@@ -115,7 +120,7 @@ function formatCameraSubmitError(error: unknown) {
     message.includes("corpo invalido") ||
     message.includes("corpo inválido")
   ) {
-    return "Não foi possível salvar a câmera. Revise nome, local, origem e status antes de tentar novamente.";
+    return "Não foi possível salvar a câmera. Revise nome, local e status antes de tentar novamente.";
   }
 
   if (message.includes("missing authentication token") || message.includes("401")) {
@@ -241,12 +246,23 @@ function HomePage() {
     }
 
     try {
+      const payload = normalizeCameraPayload(form);
+      const usedDefaultUrl = payload.url === DEFAULT_API_BASE_URL && !isValidCameraSource(form.url);
+
       if (editingId) {
-        await cameraApi.update(editingId, form);
-        setSuccess("Câmera atualizada com sucesso.");
+        await cameraApi.update(editingId, payload);
+        setSuccess(
+          usedDefaultUrl
+            ? `Câmera atualizada com sucesso. A URL inválida foi substituída por ${DEFAULT_API_BASE_URL}.`
+            : "Câmera atualizada com sucesso.",
+        );
       } else {
-        await cameraApi.create(form);
-        setSuccess("Câmera cadastrada com sucesso.");
+        await cameraApi.create(payload);
+        setSuccess(
+          usedDefaultUrl
+            ? `Câmera cadastrada com sucesso. A URL inválida foi substituída por ${DEFAULT_API_BASE_URL}.`
+            : "Câmera cadastrada com sucesso.",
+        );
       }
 
       resetForm();
