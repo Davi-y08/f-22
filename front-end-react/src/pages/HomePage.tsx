@@ -35,6 +35,9 @@ const initialForm: CameraPayload = {
   url: "",
 };
 
+const validCameraStatuses: CameraStatus[] = ["unknown", "online", "offline"];
+const allowedCameraProtocols = ["rtsp:", "rtsps:", "http:", "https:", "local:"];
+
 function getStatusTone(
   status: string,
 ): "danger" | "neutral" | "success" | "warning" {
@@ -52,6 +55,74 @@ function formatStatus(status: string) {
   };
 
   return labels[status] ?? status;
+}
+
+function isValidIPv4(value: string) {
+  const parts = value.split(".");
+  if (parts.length !== 4) return false;
+
+  return parts.every((part) => {
+    if (!/^\d{1,3}$/.test(part)) return false;
+    const number = Number(part);
+    return number >= 0 && number <= 255;
+  });
+}
+
+function isValidCameraSource(value: string) {
+  const source = value.trim();
+  if (!source) return false;
+  if (source === "0" || source.toLowerCase().startsWith("local://")) return true;
+  if (isValidIPv4(source)) return true;
+
+  try {
+    const parsed = new URL(source);
+    return Boolean(parsed.hostname) && allowedCameraProtocols.includes(parsed.protocol);
+  } catch {
+    return false;
+  }
+}
+
+function validateCameraForm(payload: CameraPayload) {
+  const errors: string[] = [];
+
+  if (!payload.name.trim()) {
+    errors.push("Informe o nome da câmera.");
+  }
+
+  if (!payload.location.trim()) {
+    errors.push("Informe o local da câmera.");
+  }
+
+  if (!isValidCameraSource(payload.url)) {
+    errors.push(
+      "Informe uma origem válida: IP, local://0, rtsp://, rtsps://, http:// ou https://.",
+    );
+  }
+
+  if (!validCameraStatuses.includes(payload.status)) {
+    errors.push("Selecione um status válido para a câmera.");
+  }
+
+  return errors;
+}
+
+function formatCameraSubmitError(error: unknown) {
+  const message = getErrorMessage(error).toLowerCase();
+
+  if (
+    message.includes("dados da camera invalidos") ||
+    message.includes("dados da câmera inválidos") ||
+    message.includes("corpo invalido") ||
+    message.includes("corpo inválido")
+  ) {
+    return "Não foi possível salvar a câmera. Revise nome, local, origem e status antes de tentar novamente.";
+  }
+
+  if (message.includes("missing authentication token") || message.includes("401")) {
+    return "Sua sessão expirou ou não foi encontrada. Faça login novamente para salvar câmeras.";
+  }
+
+  return getErrorMessage(error);
 }
 
 function HomePage() {
@@ -162,6 +233,13 @@ function HomePage() {
     setError("");
     setSuccess("");
 
+    const validationErrors = validateCameraForm(form);
+    if (validationErrors.length > 0) {
+      setError(validationErrors.join(" "));
+      setSaving(false);
+      return;
+    }
+
     try {
       if (editingId) {
         await cameraApi.update(editingId, form);
@@ -174,7 +252,7 @@ function HomePage() {
       resetForm();
       await loadCameras();
     } catch (submitError) {
-      setError(getErrorMessage(submitError));
+      setError(formatCameraSubmitError(submitError));
     } finally {
       setSaving(false);
     }
@@ -437,7 +515,7 @@ function HomePage() {
             title={editingId ? "Editar câmera" : "Nova câmera"}
             description={`API configurada: ${API_BASE_URL}`}
           >
-            <form className="grid gap-4" onSubmit={handleSubmit}>
+            <form className="grid gap-4" noValidate onSubmit={handleSubmit}>
               <FormField
                 icon={Video}
                 id="camera-name"
