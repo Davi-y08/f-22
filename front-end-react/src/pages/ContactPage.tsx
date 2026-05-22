@@ -43,11 +43,11 @@ function ContactPage() {
       <PageHeader
         eyebrow="Contato"
         title="Fale com a equipe Stealth Lens."
-        description="Use este canal para conversas comerciais, duvidas sobre implantação ou próximos passos do produto."
+        description="Use este canal para conversas comerciais, dúvidas sobre implantação ou próximos passos do produto."
       />
 
       <div className="mx-auto grid max-w-7xl gap-6 px-4 pb-12 sm:px-6 lg:grid-cols-[0.9fr_1.1fr]">
-        <Panel title="Canais" description="Informacoes organizadas para contato rapido.">
+        <Panel title="Canais" description="Informações organizadas para contato rápido.">
           <div className="grid gap-4">
             <div className="flex items-start gap-3 border-t border-white/[0.08] pt-4">
               <Mail className="mt-0.5 size-5 text-cyan-200" />
@@ -66,7 +66,7 @@ function ContactPage() {
               <div>
                 <p className="font-semibold text-white">Atendimento</p>
                 <p className="mt-1 text-sm text-slate-400">
-                  Projetos de monitoramento, integracao e IA aplicada a cameras.
+                  Projetos de monitoramento, integração e IA aplicada a câmeras.
                 </p>
               </div>
             </div>
@@ -76,14 +76,14 @@ function ContactPage() {
                 <p className="font-semibold text-white">Resposta</p>
                 <p className="mt-1 text-sm text-slate-400">
                   A equipe pode transformar a mensagem em briefing comercial ou
-                  tecnico.
+                  técnico.
                 </p>
               </div>
             </div>
           </div>
         </Panel>
 
-        <Panel title="Mensagem" description="Conte para a equipe qual cenario voce quer monitorar.">
+        <Panel title="Mensagem" description="Conte para a equipe qual cenário você quer monitorar.">
           {sent ? (
             <p className="mb-4 rounded-lg border border-emerald-300/20 bg-emerald-300/10 px-4 py-3 text-sm text-emerald-100">
               Mensagem registrada na interface.
@@ -116,7 +116,7 @@ function ContactPage() {
               id="contact-message"
               label="Mensagem"
               onChange={(event) => updateField("message", event)}
-              placeholder="Conte rapidamente o que voce precisa."
+              placeholder="Conte rapidamente o que você precisa."
               required
               value={form.message}
             />

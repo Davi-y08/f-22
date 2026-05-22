@@ -94,7 +94,7 @@ export function getErrorMessage(error: unknown) {
   }
 
   if (error instanceof TypeError) {
-    return "Não foi possivel conectar com a API. Verifique se o backend está rodando.";
+    return "Não foi possível conectar com a API. Verifique se o backend está rodando.";
   }
 
   if (error instanceof Error) {

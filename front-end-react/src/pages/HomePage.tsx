@@ -55,7 +55,7 @@ function formatStatus(status: string) {
 }
 
 function HomePage() {
-  const [agentKeyName, setAgentKeyName] = useState("Distribuido Stealth Lens");
+  const [agentKeyName, setAgentKeyName] = useState("Distribuído Stealth Lens");
   const [agentKeys, setAgentKeys] = useState<AgentAccessKey[]>([]);
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -165,10 +165,10 @@ function HomePage() {
     try {
       if (editingId) {
         await cameraApi.update(editingId, form);
-        setSuccess("Camera atualizada com sucesso.");
+        setSuccess("Câmera atualizada com sucesso.");
       } else {
         await cameraApi.create(form);
-        setSuccess("Camera cadastrada com sucesso.");
+        setSuccess("Câmera cadastrada com sucesso.");
       }
 
       resetForm();
@@ -181,7 +181,7 @@ function HomePage() {
   }
 
   async function deleteCamera(camera: Camera) {
-    const shouldDelete = window.confirm(`Excluir a camera "${camera.name}"?`);
+    const shouldDelete = window.confirm(`Excluir a câmera "${camera.name}"?`);
     if (!shouldDelete) return;
 
     setError("");
@@ -189,7 +189,7 @@ function HomePage() {
 
     try {
       await cameraApi.delete(camera.id);
-      setSuccess("Camera excluida.");
+      setSuccess("Câmera excluída.");
       if (editingId === camera.id) resetForm();
       await loadCameras();
     } catch (deleteError) {
@@ -223,7 +223,7 @@ function HomePage() {
       setKeyError("");
       setKeySuccess("Chave copiada.");
     } catch {
-      setKeyError("Nao foi possivel copiar automaticamente.");
+      setKeyError("Não foi possível copiar automaticamente.");
     }
   }
 
@@ -247,8 +247,8 @@ function HomePage() {
     <>
       <PageHeader
         eyebrow="Home"
-        title="Painel de cameras"
-        description="Gerencie cameras, pontos de monitoramento e estados operacionais em uma tela direta."
+        title="Painel de câmeras"
+        description="Gerencie câmeras, pontos de monitoramento e estados operacionais em uma tela direta."
         action={
           <div className="flex flex-col gap-3 sm:flex-row">
             <ActionButton
@@ -273,9 +273,9 @@ function HomePage() {
       <div className="mx-auto grid max-w-7xl gap-6 px-4 pb-12 sm:px-6">
         <section className="grid gap-4 md:grid-cols-3">
           {[
-            { label: "Total", value: totals.all, detail: "cameras cadastradas" },
+            { label: "Total", value: totals.all, detail: "câmeras cadastradas" },
             { label: "Online", value: totals.online, detail: "pontos ativos" },
-            { label: "Offline", value: totals.offline, detail: "precisam atencao" },
+            { label: "Offline", value: totals.offline, detail: "precisam de atenção" },
           ].map((item) => (
             <article className="surface rounded-lg p-5" key={item.label}>
               <p className="text-sm font-semibold text-slate-400">{item.label}</p>
@@ -302,8 +302,8 @@ function HomePage() {
 
         <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
           <Panel
-            title="Chave do distribuido"
-            description="Crie a chave usada pelo app local para sincronizar cameras e eventos."
+            title="Chave do distribuído"
+            description="Crie a chave usada pelo app local para sincronizar câmeras e eventos."
           >
             {(keyError || keySuccess) && (
               <div
@@ -327,7 +327,7 @@ function HomePage() {
                 onChange={(event: ChangeEvent<HTMLInputElement>) =>
                   setAgentKeyName(event.target.value)
                 }
-                placeholder="Distribuido da recepcao"
+                placeholder="Distribuído da recepção"
                 required
                 value={agentKeyName}
               />
@@ -373,12 +373,12 @@ function HomePage() {
 
           <Panel
             title="Chaves cadastradas"
-            description="A chave completa aparece somente quando e criada; depois, a lista mostra apenas o prefixo."
+            description="A chave completa aparece somente quando é criada; depois, a lista mostra apenas o prefixo."
           >
             <div className="overflow-hidden rounded-lg border border-white/[0.08]">
               <div className="grid grid-cols-[1fr_auto] gap-4 border-b border-white/[0.08] bg-white/[0.04] px-4 py-3 text-sm font-semibold text-slate-300">
                 <span>Chave</span>
-                <span>Acoes</span>
+                <span>Ações</span>
               </div>
 
               {loadingKeys ? (
@@ -406,7 +406,7 @@ function HomePage() {
                         </p>
                         {key.last_used_at ? (
                           <p className="mt-1 text-xs text-slate-500">
-                            Ultimo uso: {new Date(key.last_used_at).toLocaleString()}
+                            Último uso: {new Date(key.last_used_at).toLocaleString()}
                           </p>
                         ) : null}
                       </div>
@@ -434,7 +434,7 @@ function HomePage() {
 
         <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
           <Panel
-            title={editingId ? "Editar camera" : "Nova camera"}
+            title={editingId ? "Editar câmera" : "Nova câmera"}
             description={`API configurada: ${API_BASE_URL}`}
           >
             <form className="grid gap-4" onSubmit={handleSubmit}>
@@ -458,7 +458,7 @@ function HomePage() {
                 onChange={(event: ChangeEvent<HTMLInputElement>) =>
                   updateField("location", event.target.value)
                 }
-                placeholder="Portao, recepcao, estacionamento..."
+                placeholder="Portão, recepção, estacionamento..."
                 required
                 value={form.location}
               />
@@ -494,7 +494,7 @@ function HomePage() {
                   icon={editingId ? Save : Plus}
                   type="submit"
                 >
-                  {saving ? "Salvando..." : editingId ? "Salvar edicao" : "Cadastrar"}
+                  {saving ? "Salvando..." : editingId ? "Salvar edição" : "Cadastrar"}
                 </ActionButton>
                 {editingId ? (
                   <ActionButton icon={RotateCcw} onClick={resetForm} variant="ghost">
@@ -506,20 +506,20 @@ function HomePage() {
           </Panel>
 
           <Panel
-            title="Cameras cadastradas"
-            description="Registros ativos da operacao, com status, localizacao e origem de sincronizacao quando houver."
+            title="Câmeras cadastradas"
+            description="Registros ativos da operação, com status, localização e origem de sincronização quando houver."
           >
             <div className="overflow-hidden rounded-lg border border-white/[0.08]">
               <div className="grid grid-cols-[1fr_auto] gap-4 border-b border-white/[0.08] bg-white/[0.04] px-4 py-3 text-sm font-semibold text-slate-300">
-                <span>Camera</span>
-                <span>Acoes</span>
+                <span>Câmera</span>
+                <span>Ações</span>
               </div>
 
               {loading ? (
-                <p className="px-4 py-6 text-sm text-slate-400">Carregando cameras...</p>
+                <p className="px-4 py-6 text-sm text-slate-400">Carregando câmeras...</p>
               ) : cameras.length === 0 ? (
                 <p className="px-4 py-6 text-sm text-slate-400">
-                  Nenhuma camera carregada ainda.
+                  Nenhuma câmera carregada ainda.
                 </p>
               ) : (
                 <div className="divide-y divide-white/[0.08]">

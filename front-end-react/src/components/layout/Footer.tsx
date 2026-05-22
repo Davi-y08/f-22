@@ -7,7 +7,7 @@ function Footer() {
         <div>
           <strong className="font-display text-lg text-white">Stealth Lens</strong>
           <p className="mt-1 text-sm text-slate-400">
-            Vigilancia inteligente com uma interface mais simples e humana.
+            Vigilância inteligente com uma interface mais simples e humana.
           </p>
         </div>
         <nav className="flex flex-wrap gap-4 text-sm text-slate-400">

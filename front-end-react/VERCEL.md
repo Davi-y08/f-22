@@ -8,12 +8,12 @@ Configure o projeto da Vercel apontando para esta pasta:
 - Build Command: `npm run build`
 - Output Directory: `dist`
 
-Variavel de ambiente obrigatoria para producao:
+Variável de ambiente obrigatória para produção:
 
 ```env
 VITE_API_BASE_URL=https://api-f22.onrender.com
 ```
 
-Sem essa variavel, o frontend usa `https://api-f22.onrender.com` como fallback.
+Sem essa variável, o frontend usa `https://api-f22.onrender.com` como fallback.
 
-O arquivo `vercel.json` ja inclui o rewrite necessario para rotas SPA como `/login`, `/cadastro`, `/sobre` e `/contato` funcionarem ao recarregar a pagina.
+O arquivo `vercel.json` já inclui o rewrite necessário para rotas SPA como `/login`, `/cadastro`, `/sobre` e `/contato` funcionarem ao recarregar a página.

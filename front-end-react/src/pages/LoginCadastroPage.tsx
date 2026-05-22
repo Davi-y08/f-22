@@ -93,7 +93,7 @@ function LoginCadastroPage({ initialMode }: LoginCadastroPageProps) {
         name: signupForm.name,
         password: signupForm.password,
       });
-      setFeedback("Cadastro criado. Agora voce pode fazer login.");
+      setFeedback("Cadastro criado. Agora você pode fazer login.");
       setMode("login");
       navigate("/login");
     } catch (signupError) {
@@ -129,20 +129,20 @@ function LoginCadastroPage({ initialMode }: LoginCadastroPageProps) {
           <div>
             <p className="text-sm font-semibold text-cyan-200">Stealth Lens</p>
             <h1 className="font-display text-3xl text-white sm:text-4xl">
-              Acesso simples para uma operacao mais calma.
+              Acesso simples para uma operação mais calma.
             </h1>
           </div>
         </div>
 
         <p className="mt-6 max-w-2xl text-base leading-8 text-slate-400">
-          Entre para acompanhar cameras, organizar pontos de monitoramento e
+          Entre para acompanhar câmeras, organizar pontos de monitoramento e
           manter o painel pronto para a rotina da equipe.
         </p>
 
         <div className="mt-8 grid gap-3">
           {[
             "Acesso centralizado para operadores e equipes.",
-            "Dados de cameras e sessao em um fluxo mais leve.",
+            "Dados de câmeras e sessão em um fluxo mais leve.",
             "Entrada protegida para a rotina de monitoramento.",
           ].map((item) => (
             <div

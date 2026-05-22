@@ -16,12 +16,12 @@ const values = [
   {
     icon: HeartHandshake,
     title: "Mais humano",
-    text: "A experiência prioriza textos diretos, controles previsiveis e uma leitura mais tranquila para a equipe.",
+    text: "A experiência prioriza textos diretos, controles previsíveis e uma leitura mais tranquila para a equipe.",
   },
   {
     icon: Boxes,
     title: "Base modular",
-    text: "A estrutura continua separada em componentes, paginas, rotas e camada de API para crescer junto com o projeto.",
+    text: "A estrutura continua separada em componentes, páginas, rotas e camada de API para crescer junto com o projeto.",
   },
 ];
 
@@ -31,16 +31,16 @@ function AboutPage() {
       <PageHeader
         eyebrow="Sobre"
         title="Uma plataforma de visão computacional com cara de produto."
-        description="Stealth Lens organiza câmeras e sinais de vigilância em uma experiência escura, discreta e mais facil de operar no dia a dia."
+        description="Stealth Lens organiza câmeras e sinais de vigilância em uma experiência escura, discreta e mais fácil de operar no dia a dia."
       />
 
       <div className="mx-auto grid max-w-7xl gap-6 px-4 pb-12 sm:px-6 lg:grid-cols-[0.95fr_1.05fr]">
-        <Panel title="Identidade" description="Visao do produto e sua proposta operacional.">
+        <Panel title="Identidade" description="Visão do produto e sua proposta operacional.">
           <div className="flex flex-col gap-5 text-base leading-8 text-slate-400">
             <p>
-              Stealth Lens nasce para ambientes que já convivem com cameras,
-              alertas e decisões rápidas. A proposta e aproximar esses sinais
-              de uma rotina clara, confiável e facil de acompanhar.
+              Stealth Lens nasce para ambientes que já convivem com câmeras,
+              alertas e decisões rápidas. A proposta é aproximar esses sinais
+              de uma rotina clara, confiável e fácil de acompanhar.
             </p>
             <p>
               A plataforma combina organização de pontos de monitoramento com
