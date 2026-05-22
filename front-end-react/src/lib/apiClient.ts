@@ -1,4 +1,4 @@
-import { API_BASE_URL } from "../config/api";
+import { API_BASE_URL, DEFAULT_API_BASE_URL } from "../config/api";
 import type { Camera, CameraPayload } from "../types/camera";
 
 export type ApiMethod = "GET" | "POST" | "PUT" | "DELETE";
@@ -53,6 +53,25 @@ export async function apiRequest<T>(
   path: string,
   options: ApiRequestOptions = {},
 ): Promise<T> {
+  try {
+    return await requestFromApi<T>(API_BASE_URL, path, options);
+  } catch (error) {
+    const shouldRetryWithDefault =
+      error instanceof TypeError && API_BASE_URL !== DEFAULT_API_BASE_URL;
+
+    if (!shouldRetryWithDefault) {
+      throw error;
+    }
+
+    return requestFromApi<T>(DEFAULT_API_BASE_URL, path, options);
+  }
+}
+
+async function requestFromApi<T>(
+  apiBaseUrl: string,
+  path: string,
+  options: ApiRequestOptions = {},
+): Promise<T> {
   const headers: Record<string, string> = {
     Accept: "application/json",
   };
@@ -61,7 +80,7 @@ export async function apiRequest<T>(
     headers["Content-Type"] = "application/json";
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
     credentials: "include",
     headers,
