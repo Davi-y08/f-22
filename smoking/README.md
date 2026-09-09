@@ -27,6 +27,8 @@ build_desktop_exe.ps1
 agent/
   manager.py
   worker.py
+behaviors/
+  smoking.py
 discovery/
   service.py
 display/
@@ -45,8 +47,6 @@ utils/
   config.py
   logger.py
   redaction.py
-legacy/
-  smoking_demo.py
 ```
 
 ## Instalação
@@ -71,7 +71,13 @@ Esse perfil usa `ONNX Runtime` para reduzir bastante o tamanho do pacote final.
 
 ## Configuração
 
-O `main.py` carrega `config.json` por padrão. Neste momento ele vem pronto para teste local com:
+O `main.py` carrega `config.json` por padrão. Como esse arquivo guarda configuração local, ele não fica versionado. Crie o seu a partir do exemplo:
+
+```bash
+copy config.example.json config.json
+```
+
+O exemplo vem pronto para teste local com:
 
 - `source: 0` para abrir a câmera local
 - `display.enabled: true` para mostrar a janela ao vivo
@@ -112,9 +118,9 @@ As credenciais RTSP não são enviadas para a API; o distribuído remove usuári
 - `smoking_behavior`: define a heurística profissional de tabagismo por tracking e associação espacial
 - `storage`: define onde eventos, snapshots e status serão gravados
 
-Para usar uma câmera RTSP/IP, troque `source` para a URL RTSP e use o [config.example.json](</C:/Users/oisyz/OneDrive/Desktop/projects/f-22/smoking/config.example.json>) como base.
+Para usar uma câmera RTSP/IP, troque `source` para a URL RTSP e use o [config.example.json](config.example.json) como base.
 
-Para distribuição leve, use [config.lite.example.json](</C:/Users/oisyz/OneDrive/Desktop/projects/f-22/smoking/config.lite.example.json>) com modelo ONNX.
+Para distribuição leve, use [config.lite.example.json](config.lite.example.json) com modelo ONNX.
 
 Se você já treinou `best.pt`, gere o modelo ONNX Lite com:
 
@@ -180,8 +186,8 @@ Recomendação de ambiente para build Lite: Python `3.10`, `3.11` ou `3.12`.
 
 Saídas esperadas:
 
-- `dist\StealthLensDesktopLite\StealthLensDesktopLite.exe`
-- `dist\StealthLensDesktopLite-portable.zip`
+- `dist\_stage_StealthLensDesktopLite_<data>\StealthLensDesktopLite.exe`
+- `dist\StealthLensDesktopLite-portable-<data>.zip`
 
 Observações:
 

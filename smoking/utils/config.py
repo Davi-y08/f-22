@@ -692,14 +692,6 @@ def _default_model_catalog() -> dict[str, Any]:
             "use_tracking": True,
             "tracker": "bytetrack.yaml",
         },
-        "intrusion": {
-            "path": "yolov8m.pt",
-            "class_filters": ["person"],
-            "event_type": "intrusion",
-            "confidence": 0.35,
-            "cooldown_seconds": 12,
-            "trigger_in_zones_only": True,
-        },
     }
 
 

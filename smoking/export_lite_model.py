@@ -1,13 +1,31 @@
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import shutil
-import sys
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Exporta o modelo treinado para ONNX Lite.")
+    parser.add_argument(
+        "--source",
+        default="runs/detect/train/weights/best.pt",
+        help="Modelo .pt treinado que será exportado.",
+    )
+    parser.add_argument(
+        "--target",
+        default="models/smoking_monitor.onnx",
+        help="Destino do modelo ONNX usado pelo perfil Lite.",
+    )
+    parser.add_argument("--imgsz", type=int, default=640, help="Tamanho de entrada usado na exportação.")
+    parser.add_argument("--opset", type=int, default=12, help="Versão ONNX opset usada na exportação.")
+    return parser.parse_args()
 
 
 def main() -> int:
-    source = Path("runs/detect/train/weights/best.pt").resolve()
-    target = Path("models/smoking_monitor.onnx").resolve()
+    args = parse_args()
+    source = Path(args.source).resolve()
+    target = Path(args.target).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
 
     if not source.exists():
@@ -22,7 +40,7 @@ def main() -> int:
 
     print(f"Exportando ONNX de '{source}'...")
     model = YOLO(str(source))
-    exported = model.export(format="onnx", imgsz=640, dynamic=False, simplify=True, opset=12)
+    exported = model.export(format="onnx", imgsz=args.imgsz, dynamic=False, simplify=True, opset=args.opset)
     exported_path = Path(str(exported)).resolve()
 
     if not exported_path.exists():

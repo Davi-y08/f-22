@@ -43,6 +43,7 @@ class CameraWorker(threading.Thread):
         self._behavior_status_lines: list[str] = []
         self._started_at = time.monotonic()
         self._last_render_at = 0.0
+        self._last_status_sync_at = 0.0
         self._render_interval = _resolve_render_interval(
             configured_target_fps=self.camera_config.display.target_fps,
             display_camera_count=self.display_camera_count,
@@ -123,12 +124,12 @@ class CameraWorker(threading.Thread):
 
             while not self._stop_event.is_set():
                 packet = self.stream.read_latest(timeout=1.0)
-                self._sync_stream_status()
+                now = time.perf_counter()
+                self._sync_stream_status(now=now)
 
                 if packet is None:
                     continue
 
-                now = time.perf_counter()
                 if now - self._last_analysis_at < analysis_interval:
                     self._maybe_render_frame(packet.frame, now=now, force=False)
                     continue
@@ -308,7 +309,11 @@ class CameraWorker(threading.Thread):
 
         return None
 
-    def _sync_stream_status(self) -> None:
+    def _sync_stream_status(self, now: float) -> None:
+        if (now - self._last_status_sync_at) < 0.25:
+            return
+
+        self._last_status_sync_at = now
         stream_status = self.stream.status_snapshot()
         self._set_status(
             online=bool(stream_status["online"]),

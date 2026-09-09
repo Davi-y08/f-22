@@ -55,9 +55,7 @@ if (Test-Path "config.example.json") {
 }
 
 $modelFiles = @(
-    "runs/detect/train/weights/best.pt",
-    "yolov8m.pt",
-    "yolo26n.pt"
+    "runs/detect/train/weights/best.pt"
 )
 
 foreach ($modelFile in $modelFiles) {

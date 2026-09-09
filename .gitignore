@@ -1,0 +1,35 @@
+# Generated archives and handoff files
+*.zip
+
+# JavaScript projects
+node_modules/
+dist/
+build/
+.env
+.env.local
+.env.*.local
+
+# Python projects
+__pycache__/
+*.py[cod]
+*.pyc.*
+.venv/
+.venv-lite/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Model binaries and exports
+*.pt
+*.pth
+*.onnx
+*.engine
+*.bin
+*.spec
+
+# OS / editor
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/

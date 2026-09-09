@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.request import Request, urlopen
 
 import cv2
 import numpy as np
@@ -456,13 +457,6 @@ def _download_file(
     logger: Any,
     model_alias: str,
 ) -> None:
-    try:
-        requests = importlib.import_module("requests")
-    except ImportError as exc:  # pragma: no cover - runtime dependency
-        raise ImportError(
-            "requests não está instalado para download automático de modelos."
-        ) from exc
-
     target.parent.mkdir(parents=True, exist_ok=True)
     temp_path = target.with_suffix(target.suffix + ".download")
     if temp_path.exists():
@@ -473,12 +467,13 @@ def _download_file(
         extra={"model_alias": model_alias, "download_url": url, "target_path": str(target)},
     )
 
-    with requests.get(url, stream=True, timeout=30) as response:
-        response.raise_for_status()
+    request = Request(url, headers={"User-Agent": "StealthLensAgent/1.0"})
+    with urlopen(request, timeout=30) as response:
         with temp_path.open("wb") as handle:
-            for chunk in response.iter_content(chunk_size=1024 * 256):
+            while True:
+                chunk = response.read(1024 * 256)
                 if not chunk:
-                    continue
+                    break
                 handle.write(chunk)
 
     if expected_sha256:

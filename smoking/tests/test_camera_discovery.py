@@ -166,7 +166,11 @@ class DiscoveryParsingTests(unittest.TestCase):
             ),
         ]
 
-        collapsed = _collapse_local_rtsp_aliases(cameras)
+        with patch(
+            "discovery.service._local_interface_hosts",
+            return_value={"127.0.0.1", "192.168.1.155"},
+        ):
+            collapsed = _collapse_local_rtsp_aliases(cameras)
 
         self.assertEqual(len(collapsed), 2)
         self.assertEqual({camera.rtsp_stream_paths[0] for camera in collapsed}, {"cam1", "cam2"})

@@ -184,8 +184,7 @@ class RTSPClient:
         if self._frames.full():
             try:
                 self._frames.get_nowait()
-                status = self.status_snapshot()
-                self._set_status(dropped_frames=int(status["dropped_frames"]) + 1)
+                self._increment_status_counter("dropped_frames")
             except queue.Empty:
                 pass
         self._frames.put_nowait(packet)
@@ -198,10 +197,12 @@ class RTSPClient:
         with self._status_lock:
             self._status.update(updates)
 
+    def _increment_status_counter(self, key: str) -> None:
+        with self._status_lock:
+            self._status[key] = int(self._status.get(key, 0)) + 1
+
     def _sleep_with_stop(self, seconds: float) -> None:
-        deadline = time.time() + seconds
-        while time.time() < deadline and not self._stop_event.is_set():
-            time.sleep(0.2)
+        self._stop_event.wait(max(0.0, seconds))
 
 
 class _BaseReader:
