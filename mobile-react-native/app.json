@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "Stealth Lens",
+    "slug": "stealth-lens-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "stealthlens",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "bundleIdentifier": "com.stealthlens.mobile",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.stealthlens.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "color": "#2DD4BF",
+          "defaultChannel": "alerts"
+        }
+      ],
+      "expo-secure-store"
+    ],
+    "extra": {
+      "apiBaseUrl": "https://api-f22.onrender.com"
+    }
+  }
+}

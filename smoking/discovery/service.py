@@ -33,7 +33,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 
 COMMON_RTSP_PORTS = (554, 8554, 10554)
-COMMON_HTTP_CAMERA_PORTS = (8080, 8081)
+COMMON_HTTP_CAMERA_PORTS = (8080, 8081, 80, 81, 8000, 8001, 8888)
 LOCAL_TEST_RTSP_PATHS = tuple(f"cam{index}" for index in range(1, 9))
 GENERIC_RTSP_PATHS = (
     "",
@@ -56,6 +56,10 @@ GENERIC_HTTP_STREAM_PATHS = (
     "/?action=stream",
     "/mjpegfeed",
     "/mjpeg",
+    "/video.mjpg",
+    "/stream.mjpg",
+    "/mjpg/video.mjpg",
+    "/cgi-bin/mjpg/video.cgi",
 )
 
 
@@ -1057,6 +1061,9 @@ def _probe_http_camera_endpoint(
 
     root_status, root_headers, root_body = _probe_http_endpoint(host, port, "/", timeout)
     server = root_headers.get("server")
+    if root_status is None and not root_headers and not root_body:
+        return host, port, False, server, stream_paths, name, status, confidence
+
     root_has_camera_hint = _looks_like_camera_http_response(root_status, root_headers, root_body)
     if _looks_like_ip_webcam_body(root_body):
         name = f"IP Webcam {host}"
@@ -1064,10 +1071,11 @@ def _probe_http_camera_endpoint(
     elif root_has_camera_hint:
         name = f"HTTP Camera {host}"
         confidence = max(confidence, 0.55)
+        if root_status == 401:
+            status = "credentials_required"
+            confidence = max(confidence, 0.62)
 
-    paths_to_probe = ["/video"]
-    if root_has_camera_hint:
-        paths_to_probe.extend(path for path in GENERIC_HTTP_STREAM_PATHS if path != "/video")
+    paths_to_probe = list(GENERIC_HTTP_STREAM_PATHS)
 
     for path in _dedupe_preserve_order(paths_to_probe):
         status_code, headers, body = _probe_http_endpoint(host, port, path, timeout)
@@ -1075,8 +1083,8 @@ def _probe_http_camera_endpoint(
             server = headers.get("server")
 
         content_type = headers.get("content-type", "").lower()
-        is_stream = ("multipart/x-mixed-replace" in content_type) or ("image/jpeg" in content_type)
-        requires_auth = status_code == 401 and _looks_like_camera_headers(headers)
+        is_stream = _looks_like_http_stream_content_type(content_type)
+        requires_auth = status_code == 401 and (root_has_camera_hint or _looks_like_camera_headers(headers))
         if status_code in {200, 401} and (is_stream or requires_auth):
             normalized_path = "/" + path.lstrip("/")
             if normalized_path not in stream_paths:
@@ -1091,7 +1099,7 @@ def _probe_http_camera_endpoint(
     is_camera = bool(stream_paths) or bool(name)
     if is_camera and not stream_paths:
         stream_paths.append("/video")
-        status = "http_camera_detected"
+        status = "credentials_required" if status == "credentials_required" else "http_camera_detected"
         confidence = max(confidence, 0.58)
 
     return host, port, is_camera, server, stream_paths, name, status, confidence
@@ -1157,12 +1165,43 @@ def _looks_like_ip_webcam_body(body: str) -> bool:
     return ("ip webcam" in lowered) or ("pavel khlebovich" in lowered)
 
 
+def _looks_like_http_stream_content_type(content_type: str) -> bool:
+    lowered = content_type.lower()
+    stream_markers = (
+        "multipart/x-mixed-replace",
+        "image/jpeg",
+        "video/",
+        "application/octet-stream",
+        "application/vnd.apple.mpegurl",
+        "application/x-mpegurl",
+    )
+    return any(marker in lowered for marker in stream_markers)
+
+
+def _looks_like_camera_http_body(body: str) -> bool:
+    lowered = body.lower()
+    camera_markers = (
+        "ip webcam",
+        "pavel khlebovich",
+        "ip camera",
+        "network camera",
+        "web camera",
+        "mjpg-streamer",
+        "mjpeg",
+        "onvif",
+        "hikvision",
+        "dahua",
+        "axis",
+    )
+    return any(marker in lowered for marker in camera_markers)
+
+
 def _looks_like_camera_http_response(
     status_code: int | None,
     headers: dict[str, str],
     body: str,
 ) -> bool:
-    if _looks_like_ip_webcam_body(body):
+    if _looks_like_camera_http_body(body):
         return True
     if _looks_like_camera_headers(headers):
         return True

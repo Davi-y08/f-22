@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-from cloud.client import CloudClient
+from cloud.client import CloudClient, _attach_snapshot_payload
 from discovery.service import DiscoveredCamera
 from utils.config import CloudConfig
 
@@ -76,6 +79,19 @@ class CloudClientTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         post_json.assert_not_called()
+
+    def test_snapshot_file_is_attached_to_event_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            snapshot_path = Path(temp_dir) / "alert.jpg"
+            snapshot_bytes = b"\xff\xd8\xff\xd9"
+            snapshot_path.write_bytes(snapshot_bytes)
+            payload = {"snapshot_path": str(snapshot_path)}
+
+            _attach_snapshot_payload(payload)
+
+        self.assertEqual(payload["snapshot_base64"], base64.b64encode(snapshot_bytes).decode("ascii"))
+        self.assertEqual(payload["snapshot_mime_type"], "image/jpeg")
+        self.assertEqual(payload["snapshot_filename"], "alert.jpg")
 
 
 if __name__ == "__main__":
