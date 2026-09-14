@@ -10,6 +10,9 @@ from typing import Any
 from urllib.parse import urlsplit
 
 
+DEFAULT_SMOKING_MIN_FRAMES = 7
+
+
 @dataclass(frozen=True)
 class ZoneConfig:
     name: str
@@ -61,7 +64,7 @@ class SmokingBehaviorConfig:
     event_type: str = "smoking"
     max_distance_px: int = 80
     smoke_distance_multiplier: float = 1.35
-    min_frames: int = 12
+    min_frames: int = DEFAULT_SMOKING_MIN_FRAMES
     decay_frames: int = 1
     smoke_boost_frames: int = 2
     stale_track_seconds: float = 5.0
@@ -263,7 +266,7 @@ def build_camera_entry_from_template(
         smoking_behavior.setdefault("event_type", "smoking")
         smoking_behavior.setdefault("max_distance_px", 80)
         smoking_behavior.setdefault("smoke_distance_multiplier", 1.35)
-        smoking_behavior.setdefault("min_frames", 12)
+        smoking_behavior.setdefault("min_frames", DEFAULT_SMOKING_MIN_FRAMES)
         smoking_behavior.setdefault("decay_frames", 1)
         smoking_behavior.setdefault("smoke_boost_frames", 2)
         smoking_behavior.setdefault("stale_track_seconds", 5)
@@ -473,7 +476,7 @@ def _load_smoking_behavior_config(raw: Any) -> SmokingBehaviorConfig:
         event_type=str(raw.get("event_type", "smoking")).lower(),
         max_distance_px=max(1, int(raw.get("max_distance_px", 80))),
         smoke_distance_multiplier=max(1.0, float(raw.get("smoke_distance_multiplier", 1.35))),
-        min_frames=max(1, int(raw.get("min_frames", 12))),
+        min_frames=max(1, int(raw.get("min_frames", DEFAULT_SMOKING_MIN_FRAMES))),
         decay_frames=max(1, int(raw.get("decay_frames", 1))),
         smoke_boost_frames=max(0, int(raw.get("smoke_boost_frames", 2))),
         stale_track_seconds=max(1.0, float(raw.get("stale_track_seconds", 5.0))),
@@ -671,7 +674,7 @@ def _select_camera_template(raw_config: dict[str, Any]) -> dict[str, Any]:
             "event_type": "smoking",
             "max_distance_px": 80,
             "smoke_distance_multiplier": 1.35,
-            "min_frames": 12,
+            "min_frames": DEFAULT_SMOKING_MIN_FRAMES,
             "decay_frames": 1,
             "smoke_boost_frames": 2,
             "stale_track_seconds": 5,

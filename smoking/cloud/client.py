@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
 import json
+import mimetypes
 import queue
 import threading
 from dataclasses import asdict, dataclass, is_dataclass
+from pathlib import Path
 from typing import Any, TYPE_CHECKING
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -15,6 +18,9 @@ from utils.redaction import redact_url_credentials
 if TYPE_CHECKING:
     from discovery.service import DiscoveredCamera
     from events.emitter import DetectionEvent
+
+
+MAX_SNAPSHOT_UPLOAD_BYTES = 5 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +122,7 @@ class CloudClient:
             payload["bbox"] = list(payload["bbox"])
         if payload.get("frame_size") is not None:
             payload["frame_size"] = list(payload["frame_size"])
+        _attach_snapshot_payload(payload)
 
         try:
             self._events.put_nowait(payload)
@@ -238,6 +245,26 @@ def _source_to_url(source: str | int) -> str:
     if raw.startswith("local://"):
         return raw
     return raw
+
+
+def _attach_snapshot_payload(payload: dict[str, Any]) -> None:
+    snapshot_path = payload.get("snapshot_path")
+    if not snapshot_path:
+        return
+
+    path = Path(str(snapshot_path)).expanduser()
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return
+
+    if not data or len(data) > MAX_SNAPSHOT_UPLOAD_BYTES:
+        return
+
+    mime_type, _ = mimetypes.guess_type(str(path))
+    payload["snapshot_base64"] = base64.b64encode(data).decode("ascii")
+    payload["snapshot_mime_type"] = mime_type or "image/jpeg"
+    payload["snapshot_filename"] = path.name
 
 
 def _normalize_cloud_status(status: str) -> str:

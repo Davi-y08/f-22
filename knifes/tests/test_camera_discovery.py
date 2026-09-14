@@ -7,15 +7,48 @@ from discovery.security import validate_stream_url
 from discovery.service import (
     DiscoveredCamera,
     _SOURCE_RESOLUTION_CACHE,
+    build_candidate_http_urls,
     build_candidate_rtsp_urls,
     _collapse_local_rtsp_aliases,
     _expand_manual_stream_candidates,
     _filter_safe_stream_candidates,
     _merge_discovered_camera,
     _parse_onvif_response,
+    _probe_http_camera_endpoint,
     resolve_camera_source,
 )
 from streams.rtsp_client import test_stream_source
+
+
+class _FakeHttpSocket:
+    def __init__(self, responses: dict[str, bytes], calls: list[str]) -> None:
+        self._responses = responses
+        self._calls = calls
+        self._path = "/"
+        self._sent_response = False
+
+    def __enter__(self) -> "_FakeHttpSocket":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def settimeout(self, *_: object) -> None:
+        return None
+
+    def sendall(self, payload: bytes) -> None:
+        request_line = payload.decode("utf-8", errors="ignore").splitlines()[0]
+        self._path = request_line.split()[1]
+        self._calls.append(self._path)
+
+    def recv(self, *_: object) -> bytes:
+        if self._sent_response:
+            return b""
+        self._sent_response = True
+        return self._responses.get(
+            self._path,
+            b"HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\n",
+        )
 
 
 class StreamUrlSecurityTests(unittest.TestCase):
@@ -65,6 +98,49 @@ class DiscoveryParsingTests(unittest.TestCase):
         candidates = build_candidate_rtsp_urls(camera)
 
         self.assertEqual(candidates[0], "rtsp://192.168.1.55:8554/cam2")
+
+    def test_default_http_candidates_include_standard_camera_web_ports(self) -> None:
+        camera = DiscoveredCamera(
+            key="network:192.168.1.44",
+            kind="network",
+            name="HTTP Camera",
+            host="192.168.1.44",
+        )
+
+        candidates = build_candidate_http_urls(camera)
+
+        self.assertIn("http://192.168.1.44:80/video", candidates)
+        self.assertIn("http://192.168.1.44:8080/video", candidates)
+
+    def test_http_probe_checks_stream_paths_without_root_hint(self) -> None:
+        responses = {
+            "/": b"HTTP/1.1 404 Not Found\r\nServer: nginx\r\nContent-Type: text/html\r\n\r\nnot here",
+            "/video": b"HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\n",
+            "/videofeed": (
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: multipart/x-mixed-replace; boundary=frame\r\n\r\n"
+                b"--frame"
+            ),
+        }
+        calls: list[str] = []
+
+        def fake_connect(*_: object, **__: object) -> _FakeHttpSocket:
+            return _FakeHttpSocket(responses, calls)
+
+        with patch("discovery.service.socket.create_connection", side_effect=fake_connect):
+            host, port, is_camera, _server, stream_paths, _name, status, confidence = _probe_http_camera_endpoint(
+                "192.168.1.44",
+                8080,
+                0.01,
+            )
+
+        self.assertEqual(host, "192.168.1.44")
+        self.assertEqual(port, 8080)
+        self.assertTrue(is_camera)
+        self.assertIn("/videofeed", calls)
+        self.assertEqual(stream_paths, ["/videofeed"])
+        self.assertEqual(status, "http_stream_detected")
+        self.assertGreaterEqual(confidence, 0.78)
 
     def test_parses_onvif_uuid_and_scopes(self) -> None:
         payload = b"""
@@ -166,7 +242,11 @@ class DiscoveryParsingTests(unittest.TestCase):
             ),
         ]
 
-        collapsed = _collapse_local_rtsp_aliases(cameras)
+        with patch(
+            "discovery.service._local_interface_hosts",
+            return_value={"127.0.0.1", "192.168.1.155"},
+        ):
+            collapsed = _collapse_local_rtsp_aliases(cameras)
 
         self.assertEqual(len(collapsed), 2)
         self.assertEqual({camera.rtsp_stream_paths[0] for camera in collapsed}, {"cam1", "cam2"})

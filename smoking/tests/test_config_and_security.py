@@ -33,6 +33,38 @@ class RedactionTests(unittest.TestCase):
 
 
 class ConfigLoadingTests(unittest.TestCase):
+    def test_default_smoking_confirmation_is_looser(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "agent_id": "test-agent",
+                        "model_catalog": {
+                            "smoking_monitor": {
+                                "path": "models/smoking_monitor.onnx",
+                                "backend": "onnx",
+                                "class_names": ["cigarette", "person", "smoke"],
+                            }
+                        },
+                        "cameras": [
+                            {
+                                "id": "local-0",
+                                "name": "Local",
+                                "source": 0,
+                                "models": ["smoking_monitor"],
+                                "smoking_behavior": {"enabled": True},
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+        self.assertEqual(config.cameras[0].smoking_behavior.min_frames, 7)
+
     def test_display_target_fps_is_clamped(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.json"

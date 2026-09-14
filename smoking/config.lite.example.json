@@ -77,7 +77,7 @@
         "event_type": "smoking",
         "max_distance_px": 80,
         "smoke_distance_multiplier": 1.35,
-        "min_frames": 10,
+        "min_frames": 7,
         "decay_frames": 1,
         "smoke_boost_frames": 2,
         "stale_track_seconds": 5,
