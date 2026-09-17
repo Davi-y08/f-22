@@ -29,14 +29,14 @@ function AboutPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Sobre"
+      
         title="Uma plataforma de visão computacional com cara de produto."
-        description="Stealth Lens organiza câmeras e sinais de vigilância em uma experiência escura, discreta e mais fácil de operar no dia a dia."
+        description="Stealth Lens organiza câmeras e sinais de vigilância em uma experiência clara, discreta e mais fácil de operar no dia a dia."
       />
 
       <div className="mx-auto grid max-w-7xl gap-6 px-4 pb-12 sm:px-6 lg:grid-cols-[0.95fr_1.05fr]">
         <Panel title="Identidade" description="Visão do produto e sua proposta operacional.">
-          <div className="flex flex-col gap-5 text-base leading-8 text-slate-400">
+          <div className="flex flex-col gap-5 text-base leading-8 text-slate-600 dark:text-slate-400">
             <p>
               Stealth Lens nasce para ambientes que já convivem com câmeras,
               alertas e decisões rápidas. A proposta é aproximar esses sinais
@@ -56,11 +56,11 @@ function AboutPage() {
 
             return (
               <article className="surface rounded-lg p-5" key={item.title}>
-                <Icon className="size-5 text-cyan-200" />
-                <h2 className="mt-4 font-display text-xl text-white">
+                <Icon className="size-5 text-cyan-700 dark:text-cyan-200" />
+                <h2 className="mt-4 font-display text-xl text-slate-900 dark:text-white">
                   {item.title}
                 </h2>
-                <p className="mt-3 text-sm leading-7 text-slate-400">
+                <p className="mt-3 text-sm leading-7 text-slate-600 dark:text-slate-400">
                   {item.text}
                 </p>
               </article>

@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Outfit", system-ui, sans-serif;
   --font-display: "Space Grotesk", system-ui, sans-serif;
@@ -7,7 +9,7 @@
 
 @layer base {
   :root {
-    color-scheme: dark;
+    color-scheme: light;
   }
 
   * {
@@ -22,23 +24,15 @@
     margin: 0;
     min-width: 320px;
     background:
-      linear-gradient(rgba(34, 211, 238, 0.04) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(96, 165, 250, 0.04) 1px, transparent 1px),
-      linear-gradient(180deg, #03050a 0%, #07101a 52%, #04070c 100%);
-    background-size: 80px 80px, 80px 80px, auto;
-    color: #f8fbff;
-    font-family: var(--font-sans);
-  }
-
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    background:
-      linear-gradient(135deg, rgba(34, 211, 238, 0.08), transparent 32%),
+      linear-gradient(135deg, rgba(34, 211, 238, 0.09), transparent 32%),
       linear-gradient(315deg, rgba(99, 102, 241, 0.07), transparent 30%),
-      linear-gradient(180deg, transparent, rgba(4, 7, 12, 0.62));
+      linear-gradient(rgba(34, 211, 238, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(96, 165, 250, 0.06) 1px, transparent 1px),
+      linear-gradient(180deg, #f8fafc 0%, #eff6fa 52%, #f4f8fc 100%);
+    background-size: auto, auto, 80px 80px, 80px 80px, auto;
+    background-attachment: fixed;
+    color: #0f172a;
+    font-family: var(--font-sans);
   }
 
   a {
@@ -59,8 +53,19 @@
   }
 
   ::selection {
-    background: rgba(34, 211, 238, 0.25);
-    color: #ffffff;
+    background: rgba(34, 211, 238, 0.3);
+    color: #0f172a;
+  }
+}
+
+@keyframes slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
@@ -68,23 +73,25 @@
   .app-shell {
     min-height: 100vh;
     background:
-      linear-gradient(180deg, rgba(3, 5, 10, 0.78), rgba(3, 7, 13, 0.92)),
-      radial-gradient(circle at center, rgba(34, 211, 238, 0.05), transparent 42%);
+      linear-gradient(180deg, rgba(241, 245, 249, 0.82), rgba(248, 250, 252, 0.94)),
+      radial-gradient(circle at center, rgba(34, 211, 238, 0.08), transparent 42%);
   }
 
   .surface {
-    border: 1px solid rgba(148, 163, 184, 0.16);
+    border: 1px solid rgba(100, 116, 139, 0.16);
     background:
-      linear-gradient(180deg, rgba(8, 12, 20, 0.9), rgba(5, 9, 17, 0.76)),
-      linear-gradient(135deg, rgba(45, 212, 191, 0.07), transparent 38%, rgba(96, 165, 250, 0.07));
-    box-shadow: 0 18px 52px rgba(1, 6, 17, 0.36);
+      linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(249, 251, 253, 0.88)),
+      linear-gradient(135deg, rgba(45, 212, 191, 0.05), transparent 38%, rgba(96, 165, 250, 0.08));
+    box-shadow:
+      0 1px 2px rgba(2, 44, 80, 0.04),
+      0 18px 52px rgba(2, 44, 80, 0.1);
     backdrop-filter: blur(16px);
   }
 
   .input-shell {
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    background: rgba(255, 255, 255, 0.035);
-    color: #ffffff;
+    border: 1px solid rgba(100, 116, 139, 0.25);
+    background: rgba(255, 255, 255, 0.85);
+    color: #0f172a;
     outline: none;
     transition:
       border-color 160ms ease,
@@ -94,14 +101,68 @@
 
   .input-shell:focus,
   .input-shell:focus-within {
-    border-color: rgba(34, 211, 238, 0.42);
-    background: rgba(255, 255, 255, 0.055);
+    border-color: rgba(34, 211, 238, 0.55);
+    background: #ffffff;
     box-shadow:
-      0 0 0 1px rgba(34, 211, 238, 0.08),
-      0 0 28px rgba(34, 211, 238, 0.12);
+      0 0 0 1px rgba(34, 211, 238, 0.18),
+      0 0 28px rgba(34, 211, 238, 0.18);
   }
 
   .soft-divider {
-    border-color: rgba(255, 255, 255, 0.08);
+    border-color: rgba(100, 116, 139, 0.18);
   }
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+.dark body {
+  background:
+    linear-gradient(rgba(34, 211, 238, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(96, 165, 250, 0.04) 1px, transparent 1px),
+    linear-gradient(135deg, rgba(34, 211, 238, 0.08), transparent 32%),
+    linear-gradient(315deg, rgba(99, 102, 241, 0.07), transparent 30%),
+    linear-gradient(180deg, #03050a 0%, #07101a 52%, #04070c 100%);
+  background-size: 80px 80px, 80px 80px, auto, auto, auto;
+  background-attachment: fixed;
+  color: #f8fbff;
+}
+
+.dark ::selection {
+  background: rgba(34, 211, 238, 0.25);
+  color: #ffffff;
+}
+
+.dark .app-shell {
+  background:
+    linear-gradient(180deg, rgba(3, 5, 10, 0.78), rgba(3, 7, 13, 0.92)),
+    radial-gradient(circle at center, rgba(34, 211, 238, 0.05), transparent 42%);
+}
+
+.dark .surface {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background:
+    linear-gradient(180deg, rgba(8, 12, 20, 0.9), rgba(5, 9, 17, 0.76)),
+    linear-gradient(135deg, rgba(45, 212, 191, 0.07), transparent 38%, rgba(96, 165, 250, 0.07));
+  box-shadow: 0 18px 52px rgba(1, 6, 17, 0.36);
+}
+
+.dark .input-shell {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.035);
+  color: #ffffff;
+}
+
+.dark .input-shell:focus,
+.dark .input-shell:focus-within {
+  border-color: rgba(34, 211, 238, 0.42);
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow:
+    0 0 0 1px rgba(34, 211, 238, 0.08),
+    0 0 28px rgba(34, 211, 238, 0.12);
+}
+
+.dark .soft-divider {
+  border-color: rgba(255, 255, 255, 0.08);
 }

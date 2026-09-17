@@ -42,15 +42,15 @@ function FormField({
   value,
 }: FormFieldProps) {
   return (
-    <label className="grid gap-2 text-sm font-medium text-slate-200" htmlFor={id}>
+    <label className="grid gap-2 text-sm font-medium text-slate-700 dark:text-slate-200" htmlFor={id}>
       {label}
       <div className="relative">
         {Icon ? (
-          <Icon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500" />
+          <Icon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
         ) : null}
         <input
           autoComplete={autoComplete}
-          className="input-shell min-h-11 w-full rounded-lg px-3 py-2.5 text-sm placeholder:text-slate-500 disabled:cursor-not-allowed disabled:opacity-55"
+          className="input-shell min-h-11 w-full rounded-lg px-3 py-2.5 text-sm placeholder:text-slate-400 disabled:cursor-not-allowed disabled:opacity-55 dark:placeholder:text-slate-500"
           disabled={disabled}
           id={id}
           name={name}
@@ -76,10 +76,10 @@ function FormField({
 
 export function TextAreaField({ id, label, ...props }: TextAreaFieldProps) {
   return (
-    <label className="grid gap-2 text-sm font-medium text-slate-200" htmlFor={id}>
+    <label className="grid gap-2 text-sm font-medium text-slate-700 dark:text-slate-200" htmlFor={id}>
       {label}
       <textarea
-        className="input-shell min-h-32 w-full resize-y rounded-lg px-3 py-2.5 text-sm placeholder:text-slate-500"
+        className="input-shell min-h-32 w-full resize-y rounded-lg px-3 py-2.5 text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500"
         id={id}
         {...props}
       />

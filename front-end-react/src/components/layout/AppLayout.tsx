@@ -4,7 +4,7 @@ import Navbar from "./Navbar";
 
 function AppLayout() {
   return (
-    <div className="app-shell relative overflow-hidden text-slate-50">
+    <div className="app-shell isolate relative overflow-hidden text-slate-900 dark:text-slate-50">
       <div className="relative z-10 flex min-h-screen flex-col">
         <Navbar />
         <main className="flex-1">
