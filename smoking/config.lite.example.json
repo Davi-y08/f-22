@@ -13,7 +13,7 @@
   },
   "cloud": {
     "enabled": false,
-    "api_base_url": "",
+    "api_base_url": "https://api-f22.onrender.com",
     "agent_access_key": "",
     "sync_discovered_cameras": true,
     "sync_events": true,

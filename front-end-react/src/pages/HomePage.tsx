@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import {
+  AlertTriangle,
   Ban,
   Camera as CameraIcon,
+  CheckCircle2,
+  Clock3,
   Copy,
+  Eye,
+  Gauge,
+  ImageOff,
   KeyRound,
   MapPin,
   Pencil,
@@ -13,6 +19,7 @@ import {
   Save,
   Trash2,
   Video,
+  X,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import ActionButton from "../components/ui/ActionButton";
@@ -21,8 +28,15 @@ import PageHeader from "../components/ui/PageHeader";
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { API_BASE_URL, DEFAULT_API_BASE_URL } from "../config/api";
-import { agentKeyApi, authApi, cameraApi, getErrorMessage } from "../lib/apiClient";
-import type { AgentAccessKey, UserProfile } from "../lib/apiClient";
+import {
+  agentKeyApi,
+  authApi,
+  cameraApi,
+  detectionEventApi,
+  fetchApiAssetBlob,
+  getErrorMessage,
+} from "../lib/apiClient";
+import type { AgentAccessKey, DetectionEvent, UserProfile } from "../lib/apiClient";
 import type { Camera, CameraPayload, CameraStatus } from "../types/camera";
 
 const agentKeyStorageKey = "stealth-lens-agent-key";
@@ -129,12 +143,63 @@ function formatCameraSubmitError(error: unknown) {
   return getErrorMessage(error);
 }
 
+function formatEventType(event: DetectionEvent) {
+  const raw = event.label || event.event_type || "alerta";
+  const normalized = raw.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    cigarette: "Cigarro",
+    fire: "Fogo",
+    knife: "Faca",
+    person: "Pessoa",
+    smoke: "Fumaça",
+    smoking: "Pessoa fumando",
+  };
+
+  if (labels[normalized]) {
+    return labels[normalized];
+  }
+
+  const clean = raw.replace(/[_-]+/g, " ").trim();
+  return clean ? clean.charAt(0).toUpperCase() + clean.slice(1) : "Alerta";
+}
+
+function formatEventDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Horário indisponível";
+  }
+  return date.toLocaleString("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "medium",
+  });
+}
+
+function formatConfidence(value: number) {
+  if (!Number.isFinite(value)) {
+    return "--";
+  }
+  return `${Math.round(value * 100)}%`;
+}
+
+function getEventTone(eventType: string): "danger" | "neutral" | "success" | "warning" {
+  const normalized = eventType.toLowerCase();
+  if (normalized.includes("smoking") || normalized.includes("knife") || normalized.includes("fire")) {
+    return "danger";
+  }
+  if (normalized.includes("smoke")) {
+    return "warning";
+  }
+  return "neutral";
+}
+
 function HomePage() {
   const [agentKeyName, setAgentKeyName] = useState("Distribuído Stealth Lens");
   const [agentKeys, setAgentKeys] = useState<AgentAccessKey[]>([]);
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [events, setEvents] = useState<DetectionEvent[]>([]);
+  const [eventsError, setEventsError] = useState("");
   const [form, setForm] = useState<CameraPayload>(initialForm);
   const [keyError, setKeyError] = useState("");
   const [keySuccess, setKeySuccess] = useState("");
@@ -142,19 +207,22 @@ function HomePage() {
     () => localStorage.getItem(agentKeyStorageKey) ?? "",
   );
   const [loading, setLoading] = useState(false);
+  const [loadingEvents, setLoadingEvents] = useState(false);
   const [loadingKeys, setLoadingKeys] = useState(false);
   const [savingKey, setSavingKey] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [selectedEvent, setSelectedEvent] = useState<DetectionEvent | null>(null);
   const [success, setSuccess] = useState("");
   const [user, setUser] = useState<UserProfile | null>(null);
 
   const totals = useMemo(
     () => ({
       all: cameras.length,
+      alerts: events.length,
       offline: cameras.filter((camera) => camera.status === "offline").length,
       online: cameras.filter((camera) => camera.status === "online").length,
     }),
-    [cameras],
+    [cameras, events.length],
   );
 
   useEffect(() => {
@@ -170,7 +238,7 @@ function HomePage() {
     try {
       const currentUser = await authApi.me();
       setUser(currentUser);
-      await loadAgentKeys(true);
+      await Promise.all([loadAgentKeys(true), loadEvents(true)]);
     } catch {
       setUser(null);
     }
@@ -207,6 +275,31 @@ function HomePage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadEvents(quiet = false) {
+    setLoadingEvents(true);
+    if (!quiet) {
+      setEventsError("");
+    }
+
+    try {
+      const result = await detectionEventApi.list(80);
+      setEvents(result);
+    } catch (loadError) {
+      if (!quiet) {
+        setEventsError(getErrorMessage(loadError));
+      }
+    } finally {
+      setLoadingEvents(false);
+    }
+  }
+
+  async function refreshDashboard() {
+    await Promise.all([
+      loadCameras(),
+      user ? loadEvents() : Promise.resolve(),
+    ]);
   }
 
   function updateField(field: keyof CameraPayload, value: string) {
@@ -345,9 +438,9 @@ function HomePage() {
         action={
           <div className="flex flex-col gap-3 sm:flex-row">
             <ActionButton
-              disabled={loading}
+              disabled={loading || loadingEvents}
               icon={RefreshCw}
-              onClick={() => void loadCameras()}
+              onClick={() => void refreshDashboard()}
               variant="secondary"
             >
               Atualizar
@@ -363,7 +456,7 @@ function HomePage() {
       />
 
       <div className="mx-auto grid max-w-7xl gap-6 px-4 pb-12 sm:px-6">
-        <section className="grid gap-4 md:grid-cols-3">
+        <section className="grid gap-4 md:grid-cols-4">
           {[
             {
               label: "Total",
@@ -386,6 +479,10 @@ function HomePage() {
               accent: "from-rose-500 to-red-500",
               chip: "bg-red-700/10 text-red-700 dark:bg-red-300/12 dark:text-red-100",
             },
+            { label: "Total", value: totals.all, detail: "câmeras cadastradas" },
+            { label: "Online", value: totals.online, detail: "pontos ativos" },
+            { label: "Offline", value: totals.offline, detail: "precisam de atenção" },
+            { label: "Alertas", value: totals.alerts, detail: "eventos recentes" },
           ].map((item) => (
             <article
               className="surface relative overflow-hidden rounded-xl p-5 transition hover:-translate-y-0.5 hover:shadow-[0_24px_60px_rgba(2,44,80,0.16)] dark:hover:shadow-[0_24px_60px_rgba(0,0,0,0.45)]"
@@ -419,6 +516,37 @@ function HomePage() {
             {error || success}
           </div>
         )}
+
+        <Panel
+          title="Alertas recentes"
+          description="Eventos recebidos pela API, com horário, câmera, confiança e snapshot quando o agente enviou a imagem."
+        >
+          {eventsError ? (
+            <div className="mb-4 rounded-lg border border-red-300/20 bg-red-300/10 px-4 py-3 text-sm text-red-100">
+              {eventsError}
+            </div>
+          ) : null}
+
+          {loadingEvents ? (
+            <div className="rounded-lg border border-white/[0.08] bg-white/[0.03] px-4 py-8 text-sm text-slate-400">
+              Carregando alertas...
+            </div>
+          ) : events.length === 0 ? (
+            <div className="rounded-lg border border-white/[0.08] bg-white/[0.03] px-4 py-8 text-sm text-slate-400">
+              Nenhum alerta recebido ainda.
+            </div>
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-2">
+              {events.slice(0, 12).map((event) => (
+                <AlertCard
+                  event={event}
+                  key={event.id}
+                  onOpen={() => setSelectedEvent(event)}
+                />
+              ))}
+            </div>
+          )}
+        </Panel>
 
         <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
           <Panel
@@ -694,7 +822,216 @@ function HomePage() {
           </Panel>
         </section>
       </div>
+      <AlertModal event={selectedEvent} onClose={() => setSelectedEvent(null)} />
     </>
+  );
+}
+
+function AlertCard({
+  event,
+  onOpen,
+}: {
+  event: DetectionEvent;
+  onOpen: () => void;
+}) {
+  return (
+    <article className="grid gap-4 rounded-lg border border-white/[0.08] bg-white/[0.035] p-3 sm:grid-cols-[148px_minmax(0,1fr)]">
+      <SnapshotImage
+        alt={`Snapshot do alerta ${formatEventType(event)}`}
+        className="h-36 w-full rounded-lg object-cover sm:h-full"
+        fallbackClassName="h-36 w-full rounded-lg sm:h-full"
+        snapshotPath={event.snapshot_url}
+      />
+      <div className="flex min-w-0 flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusBadge tone={getEventTone(event.event_type)}>
+            {formatEventType(event)}
+          </StatusBadge>
+          {event.snapshot_size ? (
+            <StatusBadge tone="success">Com imagem</StatusBadge>
+          ) : (
+            <StatusBadge tone="warning">Sem imagem</StatusBadge>
+          )}
+        </div>
+
+        <div className="min-w-0">
+          <h3 className="truncate font-display text-xl text-white">
+            {event.camera_name || event.camera_external_id}
+          </h3>
+          <p className="mt-1 truncate text-sm text-slate-400">
+            {event.camera_external_id}
+          </p>
+        </div>
+
+        <div className="grid gap-2 text-sm text-slate-300 sm:grid-cols-2">
+          <span className="inline-flex items-center gap-2">
+            <Clock3 className="size-4 text-cyan-200" />
+            {formatEventDate(event.occurred_at)}
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <Gauge className="size-4 text-cyan-200" />
+            {formatConfidence(event.confidence)}
+          </span>
+        </div>
+
+        <button
+          className="mt-auto inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-sm font-semibold text-cyan-50 transition hover:border-cyan-300/38 hover:bg-cyan-300/16"
+          type="button"
+          onClick={onOpen}
+        >
+          <Eye className="size-4" />
+          Ver alerta
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function AlertModal({
+  event,
+  onClose,
+}: {
+  event: DetectionEvent | null;
+  onClose: () => void;
+}) {
+  if (!event) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/78 px-4 py-6 backdrop-blur-sm">
+      <div className="surface max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-lg">
+        <div className="flex items-start justify-between gap-4 border-b border-white/[0.08] px-5 py-4">
+          <div className="min-w-0">
+            <StatusBadge tone={getEventTone(event.event_type)}>
+              {formatEventType(event)}
+            </StatusBadge>
+            <h2 className="mt-3 truncate font-display text-2xl text-white">
+              {event.camera_name || event.camera_external_id}
+            </h2>
+          </div>
+          <button
+            className="inline-flex size-10 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-slate-100 transition hover:border-cyan-300/28"
+            type="button"
+            aria-label="Fechar alerta"
+            title="Fechar"
+            onClick={onClose}
+          >
+            <X className="size-5" />
+          </button>
+        </div>
+
+        <div className="grid max-h-[calc(92vh-88px)] gap-5 overflow-y-auto p-5 lg:grid-cols-[minmax(0,1.25fr)_0.75fr]">
+          <SnapshotImage
+            alt={`Imagem do alerta em ${event.camera_name}`}
+            className="aspect-video w-full rounded-lg object-cover"
+            fallbackClassName="aspect-video w-full rounded-lg"
+            snapshotPath={event.snapshot_url}
+          />
+
+          <div className="grid content-start gap-4">
+            <AlertDetail icon={Clock3} label="Horário" value={formatEventDate(event.occurred_at)} />
+            <AlertDetail icon={CameraIcon} label="Câmera" value={event.camera_name || event.camera_external_id} />
+            <AlertDetail icon={Gauge} label="Confiança" value={formatConfidence(event.confidence)} />
+            <AlertDetail icon={AlertTriangle} label="Evento" value={event.event_type} />
+            <AlertDetail label="Modelo" value={event.model_alias || "--"} />
+            <AlertDetail label="Arquivo" value={event.snapshot_filename || "--"} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SnapshotImage({
+  alt,
+  className,
+  fallbackClassName,
+  snapshotPath,
+}: {
+  alt: string;
+  className: string;
+  fallbackClassName: string;
+  snapshotPath?: string;
+}) {
+  const [objectUrl, setObjectUrl] = useState("");
+  const [state, setState] = useState<"empty" | "failed" | "loading" | "ready">(
+    snapshotPath ? "loading" : "empty",
+  );
+
+  useEffect(() => {
+    let active = true;
+    let createdUrl = "";
+
+    if (!snapshotPath) {
+      setObjectUrl("");
+      setState("empty");
+      return () => undefined;
+    }
+
+    setState("loading");
+    fetchApiAssetBlob(snapshotPath)
+      .then((blob) => {
+        createdUrl = URL.createObjectURL(blob);
+        if (!active) {
+          URL.revokeObjectURL(createdUrl);
+          return;
+        }
+
+        setObjectUrl(createdUrl);
+        setState("ready");
+      })
+      .catch(() => {
+        if (active) {
+          setObjectUrl("");
+          setState("failed");
+        }
+      });
+
+    return () => {
+      active = false;
+      if (createdUrl) {
+        URL.revokeObjectURL(createdUrl);
+      }
+    };
+  }, [snapshotPath]);
+
+  if (state === "ready" && objectUrl) {
+    return <img alt={alt} className={className} src={objectUrl} />;
+  }
+
+  return (
+    <div
+      className={[
+        "grid place-items-center border border-white/[0.08] bg-white/[0.04] text-sm text-slate-400",
+        fallbackClassName,
+      ].join(" ")}
+    >
+      <span className="inline-flex items-center gap-2 px-3 text-center">
+        <ImageOff className="size-4 text-slate-500" />
+        {state === "loading" ? "Carregando imagem" : "Imagem indisponível"}
+      </span>
+    </div>
+  );
+}
+
+function AlertDetail({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon?: typeof Clock3;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-lg border border-white/[0.08] bg-white/[0.035] p-4">
+      <p className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
+        {Icon ? <Icon className="size-4 text-cyan-200" /> : null}
+        {label}
+      </p>
+      <p className="mt-2 break-words text-sm leading-6 text-slate-200">{value}</p>
+    </div>
   );
 }
 

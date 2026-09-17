@@ -292,7 +292,7 @@ def build_default_raw_config() -> dict[str, Any]:
         },
         "cloud": {
             "enabled": False,
-            "api_base_url": "",
+            "api_base_url": "https://api-f22.onrender.com",
             "agent_access_key": "",
             "sync_discovered_cameras": True,
             "sync_events": True,

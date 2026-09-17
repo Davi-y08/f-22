@@ -25,6 +25,30 @@ export type AgentAccessKey = {
   revoked_at?: string;
 };
 
+export type DetectionEvent = {
+  agent_id: string;
+  bbox?: string;
+  camera_external_id: string;
+  camera_id?: string;
+  camera_name: string;
+  confidence: number;
+  created_at: string;
+  event_type: string;
+  frame_size?: string;
+  id: string;
+  label: string;
+  local_event_id?: string;
+  metadata?: string;
+  model_alias: string;
+  occurred_at: string;
+  snapshot_filename?: string;
+  snapshot_mime_type?: string;
+  snapshot_path?: string;
+  snapshot_size?: number;
+  snapshot_url?: string;
+  zone?: string;
+};
+
 export type LoginPayload = {
   email: string;
   password: string;
@@ -107,6 +131,53 @@ async function requestFromApi<T>(
   return payload as T;
 }
 
+export function apiAssetUrl(pathOrUrl: string, apiBaseUrl = API_BASE_URL) {
+  if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) {
+    return pathOrUrl;
+  }
+
+  return `${apiBaseUrl}${pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`}`;
+}
+
+export async function fetchApiAssetBlob(pathOrUrl: string): Promise<Blob> {
+  try {
+    return await fetchAssetBlobFromApi(API_BASE_URL, pathOrUrl);
+  } catch (error) {
+    const shouldRetryWithDefault =
+      error instanceof TypeError &&
+      API_BASE_URL !== DEFAULT_API_BASE_URL &&
+      !pathOrUrl.startsWith("http://") &&
+      !pathOrUrl.startsWith("https://");
+
+    if (!shouldRetryWithDefault) {
+      throw error;
+    }
+
+    return fetchAssetBlobFromApi(DEFAULT_API_BASE_URL, pathOrUrl);
+  }
+}
+
+async function fetchAssetBlobFromApi(apiBaseUrl: string, pathOrUrl: string): Promise<Blob> {
+  const response = await fetch(apiAssetUrl(pathOrUrl, apiBaseUrl), {
+    credentials: "include",
+    headers: {
+      Accept: "image/*",
+    },
+    method: "GET",
+  });
+
+  if (!response.ok) {
+    const payload = await response.text().catch(() => "");
+    throw new ApiClientError(
+      payload.trim() || `HTTP ${response.status}`,
+      response.status,
+      payload,
+    );
+  }
+
+  return response.blob();
+}
+
 export function getErrorMessage(error: unknown) {
   if (error instanceof ApiClientError) {
     return error.message;
@@ -178,5 +249,11 @@ export const agentKeyApi = {
     return apiRequest<void>(`/agent-keys/${id}`, {
       method: "DELETE",
     });
+  },
+};
+
+export const detectionEventApi = {
+  list(limit = 80) {
+    return apiRequest<DetectionEvent[]>(`/events?limit=${limit}`);
   },
 };
