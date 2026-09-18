@@ -106,7 +106,7 @@ function LoginCadastroPage({ initialMode }: LoginCadastroPageProps) {
   function passwordToggle() {
     return (
       <button
-        className="inline-flex size-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-white/[0.06] hover:text-cyan-200"
+        className="inline-flex size-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-900/[0.06] hover:text-cyan-700 dark:text-slate-400 dark:hover:bg-white/[0.06] dark:hover:text-cyan-200"
         type="button"
         aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
         title={showPassword ? "Ocultar senha" : "Mostrar senha"}
@@ -122,19 +122,19 @@ function LoginCadastroPage({ initialMode }: LoginCadastroPageProps) {
       <section className="surface rounded-lg p-6 sm:p-8">
         <div className="flex items-center gap-4">
           <img
-            className="size-14 rounded-lg object-cover ring-1 ring-white/10"
-            src="/assets/stealth-lens-logo.jpg"
+            className="size-14 rounded-lg object-cover ring-1 ring-slate-900/10 dark:ring-white/10"
+            src="/assets/logo.jpg"
             alt="Stealth Lens"
           />
           <div>
-            <p className="text-sm font-semibold text-cyan-200">Stealth Lens</p>
-            <h1 className="font-display text-3xl text-white sm:text-4xl">
+            <p className="text-sm font-semibold text-cyan-700 dark:text-cyan-200">Stealth Lens</p>
+            <h1 className="font-display text-3xl text-slate-900 sm:text-4xl dark:text-white">
               Acesso simples para uma operação mais calma.
             </h1>
           </div>
         </div>
 
-        <p className="mt-6 max-w-2xl text-base leading-8 text-slate-400">
+        <p className="mt-6 max-w-2xl text-base leading-8 text-slate-600 dark:text-slate-400">
           Entre para acompanhar câmeras, organizar pontos de monitoramento e
           manter o painel pronto para a rotina da equipe.
         </p>
@@ -146,10 +146,10 @@ function LoginCadastroPage({ initialMode }: LoginCadastroPageProps) {
             "Entrada protegida para a rotina de monitoramento.",
           ].map((item) => (
             <div
-              className="flex items-start gap-3 border-t border-white/[0.08] pt-3 text-sm leading-6 text-slate-300"
+              className="flex items-start gap-3 border-t border-slate-900/10 pt-3 text-sm leading-6 text-slate-600 dark:border-white/[0.08] dark:text-slate-300"
               key={item}
             >
-              <ShieldCheck className="mt-0.5 size-4 shrink-0 text-cyan-200" />
+              <ShieldCheck className="mt-0.5 size-4 shrink-0 text-cyan-700 dark:text-cyan-200" />
               {item}
             </div>
           ))}
@@ -162,16 +162,18 @@ function LoginCadastroPage({ initialMode }: LoginCadastroPageProps) {
             <StatusBadge tone={mode === "login" ? "success" : "neutral"}>
               {mode === "login" ? "Login" : "Cadastro"}
             </StatusBadge>
-            <h2 className="mt-3 font-display text-3xl text-white">
+            <h2 className="mt-3 font-display text-3xl text-slate-900 dark:text-white">
               {mode === "login" ? "Bem-vindo de volta" : "Crie sua conta"}
             </h2>
           </div>
-          <div className="grid grid-cols-2 rounded-lg border border-white/10 bg-white/[0.03] p-1">
+          <div className="grid grid-cols-2 rounded-full border border-slate-900/10 bg-slate-900/[0.03] p-1 dark:border-white/10 dark:bg-white/[0.03]">
             <NavLink
               className={({ isActive }) =>
                 [
-                  "rounded-md px-4 py-2 text-center text-sm font-semibold transition",
-                  isActive ? "bg-cyan-300 text-slate-950" : "text-slate-300",
+                  "rounded-full px-4 py-2 text-center text-sm font-semibold transition",
+                  isActive
+                    ? "bg-[#202140] text-white shadow-sm dark:bg-gradient-to-r dark:from-cyan-300 dark:via-cyan-400 dark:to-blue-500 dark:text-slate-950 dark:shadow-none"
+                    : "text-slate-600 dark:text-slate-300",
                 ].join(" ")
               }
               to="/login"
@@ -181,8 +183,10 @@ function LoginCadastroPage({ initialMode }: LoginCadastroPageProps) {
             <NavLink
               className={({ isActive }) =>
                 [
-                  "rounded-md px-4 py-2 text-center text-sm font-semibold transition",
-                  isActive ? "bg-cyan-300 text-slate-950" : "text-slate-300",
+                  "rounded-full px-4 py-2 text-center text-sm font-semibold transition",
+                  isActive
+                    ? "bg-[#202140] text-white shadow-sm dark:bg-gradient-to-r dark:from-cyan-300 dark:via-cyan-400 dark:to-blue-500 dark:text-slate-950 dark:shadow-none"
+                    : "text-slate-600 dark:text-slate-300",
                 ].join(" ")
               }
               to="/cadastro"
@@ -193,13 +197,13 @@ function LoginCadastroPage({ initialMode }: LoginCadastroPageProps) {
         </div>
 
         {error ? (
-          <p className="mb-4 rounded-lg border border-red-300/20 bg-red-300/10 px-4 py-3 text-sm text-red-100">
+          <p className="mb-4 rounded-lg border border-red-500/30 bg-red-400/12 px-4 py-3 text-sm text-red-700 dark:border-red-300/20 dark:bg-red-300/10 dark:text-red-100">
             {error}
           </p>
         ) : null}
 
         {feedback ? (
-          <p className="mb-4 rounded-lg border border-emerald-300/20 bg-emerald-300/10 px-4 py-3 text-sm text-emerald-100">
+          <p className="mb-4 rounded-lg border border-emerald-500/30 bg-emerald-400/12 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-300/20 dark:bg-emerald-300/10 dark:text-emerald-100">
             {feedback}
           </p>
         ) : null}
@@ -231,7 +235,7 @@ function LoginCadastroPage({ initialMode }: LoginCadastroPageProps) {
               type={showPassword ? "text" : "password"}
               value={loginForm.password}
             />
-            <ActionButton disabled={submitting} icon={ShieldCheck} type="submit">
+            <ActionButton disabled={submitting} type="submit">
               {submitting ? "Entrando..." : "Entrar"}
             </ActionButton>
           </form>
