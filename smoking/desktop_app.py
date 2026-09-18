@@ -127,6 +127,7 @@ class StealthLensDesktopApp:
         self.config_path_var = tk.StringVar(value=str(default_config))
         self.agent_id_var = tk.StringVar(value="stealth-lens-local")
         self.cloud_enabled_var = tk.BooleanVar(value=False)
+        self.cloud_sync_status_var = tk.StringVar(value="Alertas: aguardando monitoramento.")
         self.cloud_api_url_var = tk.StringVar(value=DEFAULT_CLOUD_API_BASE_URL)
         self.cloud_key_var = tk.StringVar(value="")
         self.camera_name_var = tk.StringVar(value="")
@@ -422,6 +423,8 @@ class StealthLensDesktopApp:
             style="Body.TLabel",
             wraplength=980,
         ).grid(row=3, column=0, columnspan=5, sticky="w", pady=(8, 0))
+        ttk.Label(cloud_panel, textvariable=self.cloud_sync_status_var, style="Body.TLabel",
+                  wraplength=980).grid(row=4, column=0, columnspan=5, sticky="w", pady=(6, 0))
 
         content = ttk.Frame(wrapper, style="App.TFrame")
         content.pack(fill="both", expand=True, pady=(12, 8))
@@ -821,8 +824,13 @@ class StealthLensDesktopApp:
                 )
                 raise RuntimeError(f"Todas as câmeras falharam ao iniciar. {details}")
 
+            previous_cloud_status = None
             while not self._monitor_stop.is_set() and not manager.should_stop:
-                time.sleep(0.25)
+                cloud_status = manager.status_snapshot().get("cloud", {})
+                if cloud_status != previous_cloud_status:
+                    self._event_queue.put(("cloud-event-status", cloud_status))
+                    previous_cloud_status = cloud_status
+                self._monitor_stop.wait(1.0)
         except Exception as exc:
             self._event_queue.put(("error", f"Falha ao iniciar monitoramento: {exc}"))
         finally:
@@ -967,6 +975,20 @@ class StealthLensDesktopApp:
 
         if event_name == "cloud-sync-result":
             self._append_log(str(payload))
+            return
+
+        if event_name == "cloud-event-status":
+            if not payload.get("enabled"):
+                self.cloud_sync_status_var.set("Alertas: envio para API desativado.")
+            else:
+                status = (
+                    f"Alertas: {payload.get('pending_events', 0)} pendentes | "
+                    f"{payload.get('synced_events', 0)} enviados nesta sessao | "
+                    f"{payload.get('failed_events', 0)} com erro"
+                )
+                if payload.get("last_error"):
+                    status += f" | {payload['last_error']}"
+                self.cloud_sync_status_var.set(status)
             return
 
         if event_name == "monitor-ui-reset":

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import re
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -9,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import cv2
+from utils.storage import atomic_write
 
 
 @dataclass(slots=True)
@@ -86,7 +89,13 @@ class FileEventEmitter:
         save_snapshot: bool = False,
     ) -> DetectionEvent:
         if save_snapshot and frame is not None:
-            event.snapshot_path = self._save_snapshot(event, frame)
+            try:
+                event.snapshot_path = self._save_snapshot(event, frame)
+            except (OSError, ValueError, cv2.error) as exc:
+                event.snapshot_path = None
+                event.metadata["snapshot_error"] = str(exc)
+                if self.logger:
+                    self.logger.warning("snapshot_save_failed", extra={"event_id": event.event_id, "error": str(exc)})
 
         payload = asdict(event)
         payload["bbox"] = list(event.bbox)
@@ -102,7 +111,14 @@ class FileEventEmitter:
             self.logger.info("event_emitted", extra={"event_payload": payload})
 
         if self.cloud_client is not None:
-            self.cloud_client.emit_event_async(event)
+            try:
+                self.cloud_client.emit_event_async(event)
+            except Exception as exc:
+                if self.logger:
+                    self.logger.error(
+                        "cloud_event_enqueue_failed",
+                        extra={"event_id": event.event_id, "error": str(exc), "local_file": str(target_file)},
+                    )
 
         return event
 
@@ -112,10 +128,19 @@ class FileEventEmitter:
         return
 
     def _save_snapshot(self, event: DetectionEvent, frame: Any) -> str:
-        camera_dir = self.snapshots_dir / event.camera_id
+        camera_dir = self.snapshots_dir / _safe_component(event.camera_id)
         camera_dir.mkdir(parents=True, exist_ok=True)
 
-        file_name = f"{event.timestamp.replace(':', '-').replace('.', '-')}-{event.event_type}.jpg"
+        file_name = f"{_safe_component(event.event_type)}-{_safe_component(event.event_id)}.jpg"
         snapshot_path = camera_dir / file_name
-        cv2.imwrite(str(snapshot_path), frame)
-        return str(snapshot_path)
+        success, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 88])
+        if not success or encoded is None or encoded.size == 0:
+            raise ValueError("Nao foi possivel codificar a foto do alerta.")
+        atomic_write(snapshot_path, encoded.tobytes())
+        return str(snapshot_path.resolve())
+
+
+def _safe_component(value: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]", "_", value)[:80]
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+    return f"{cleaned or 'event'}-{digest}"

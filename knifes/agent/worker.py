@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 import threading
 import time
 from typing import Any
@@ -34,15 +36,24 @@ class CameraWorker(threading.Thread):
 
         self._stop_event = threading.Event()
         self._status_lock = threading.Lock()
+        self._result_lock = threading.Lock()
+        self._analysis_error: str | None = None
         self._last_analysis_at = 0.0
-        self._last_event_at: dict[tuple[str, str, str, str], float] = {}
+        self._last_event_at: dict[tuple[Any, ...], float] = {}
+        self._last_cooldown_cleanup = 0.0
         self._model_sessions = []
         self._last_detections: list[Detection] = []
         self._last_inference_ms = 0.0
+        self._inference_ema_ms = 0.0
+        self._last_detection_at = 0.0
         self._recent_events: deque[str] = deque(maxlen=5)
         self._behavior_status_lines: list[str] = []
         self._started_at = time.monotonic()
         self._last_render_at = 0.0
+        self._last_status_sync_at = 0.0
+        self._analysis_interval = 1.0 / max(self.camera_config.fps_analysis, 0.1)
+        self._consecutive_analysis_failures = 0
+        self._consecutive_render_failures = 0
         self._render_interval = _resolve_render_interval(
             configured_target_fps=self.camera_config.display.target_fps,
             display_camera_count=self.display_camera_count,
@@ -106,11 +117,16 @@ class CameraWorker(threading.Thread):
                 "emitted_events": int(self._stats["emitted_events"]),
                 "average_inference_ms": round(float(self._stats["average_inference_ms"]), 2),
                 "analysis_fps": round(analyzed_frames / uptime, 2) if uptime > 0 else 0.0,
+                "effective_analysis_fps": round(
+                    1.0 / self._analysis_interval,
+                    2,
+                ) if self._analysis_interval > 0 else 0.0,
             }
         )
         return snapshot
 
     def run(self) -> None:
+        executor = None
         try:
             self._set_status(state="loading_models")
             self._model_sessions = build_model_sessions(self.camera_config, self.agent_config, self.logger)
@@ -119,23 +135,29 @@ class CameraWorker(threading.Thread):
             self.stream.start()
 
             analysis_interval = 1.0 / max(self.camera_config.fps_analysis, 0.1)
+            self._analysis_interval = analysis_interval
             self._set_status(state="running")
+            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"inference-{self.camera_config.id}")
+            analysis_future = None
 
             while not self._stop_event.is_set():
                 packet = self.stream.read_latest(timeout=1.0)
-                self._sync_stream_status()
+                now = time.perf_counter()
+                self._sync_stream_status(now=now)
 
                 if packet is None:
                     continue
 
-                now = time.perf_counter()
-                if now - self._last_analysis_at < analysis_interval:
-                    self._maybe_render_frame(packet.frame, now=now, force=False)
-                    continue
-
-                self._last_analysis_at = now
-                self._analyze_frame(packet.frame)
-                self._maybe_render_frame(packet.frame, now=time.perf_counter(), force=True)
+                if analysis_future is None or analysis_future.done():
+                    if analysis_future is not None:
+                        analysis_future.result()
+                        self._analysis_interval = self._resolve_analysis_interval(analysis_interval)
+                    if now - self._last_analysis_at >= self._analysis_interval:
+                        self._last_analysis_at = now
+                        analysis_future = executor.submit(
+                            self._safe_analyze_frame, packet.frame, getattr(packet, "captured_at", None),
+                        )
+                self._safe_maybe_render_frame(packet.frame, now=now, force=False)
         except Exception as exc:
             self.logger.exception(
                 "camera_worker_failed",
@@ -143,11 +165,36 @@ class CameraWorker(threading.Thread):
             )
             self._set_status(state="error", last_error=str(exc), online=False)
         finally:
+            self._stop_event.set()
+            if executor is not None:
+                executor.shutdown(wait=True, cancel_futures=True)
             self.stream.stop()
             if self.status_snapshot()["state"] != "error":
                 self._set_status(state="stopped", online=False)
 
-    def _analyze_frame(self, frame: Any) -> None:
+    def _safe_analyze_frame(self, frame: Any, captured_at: datetime | None = None) -> None:
+        try:
+            self._analyze_frame(frame, captured_at=captured_at)
+            self._consecutive_analysis_failures = 0
+            self._analysis_error = None
+        except Exception as exc:
+            self._consecutive_analysis_failures += 1
+            self.logger.warning(
+                "frame_analysis_failed",
+                extra={
+                    "camera_id": self.camera_config.id,
+                    "error": str(exc),
+                    "consecutive_failures": self._consecutive_analysis_failures,
+                },
+                exc_info=True,
+            )
+            self._analysis_error = f"Falha na análise do frame: {exc}"
+            with self._result_lock:
+                self._last_detections = []
+            self._set_status(state="running", last_error=self._analysis_error)
+            self._stop_event.wait(min(0.25, 0.04 * self._consecutive_analysis_failures))
+
+    def _analyze_frame(self, frame: Any, captured_at: datetime | None = None) -> None:
         total_inference_ms = 0.0
         emitted = 0
         detections: list[Detection] = []
@@ -158,12 +205,12 @@ class CameraWorker(threading.Thread):
             detections.extend(session_detections)
 
         derived_event_detections: list[Detection] = []
-        self._behavior_status_lines = []
+        behavior_status_lines: list[str] = []
         if self.smoking_behavior is not None:
             behavior_result = self.smoking_behavior.process(detections)
             detections = behavior_result.detections
             derived_event_detections = behavior_result.derived_events
-            self._behavior_status_lines = behavior_result.status_lines
+            behavior_status_lines = behavior_result.status_lines
 
         event_candidates = detections + derived_event_detections
 
@@ -179,7 +226,7 @@ class CameraWorker(threading.Thread):
             if cooldown is None:
                 cooldown = self.camera_config.cooldown_seconds
 
-            if not self._can_emit_event(detection, zone_name, cooldown):
+            if not self._can_emit_event(detection, zone_name):
                 continue
 
             height, width = frame.shape[:2]
@@ -196,18 +243,27 @@ class CameraWorker(threading.Thread):
                 frame_size=(width, height),
                 metadata=_build_event_metadata(detection, self.camera_config.fps_analysis, total_inference_ms),
             )
+            if captured_at is not None:
+                event.timestamp = captured_at.isoformat()
             self.emitter.emit(
                 event=event,
                 frame=frame,
                 save_snapshot=self.camera_config.snapshot_on_event,
             )
-            self._recent_events.append(
-                _format_recent_event(event)
-            )
+            self._last_event_at[self._event_key(detection, zone_name)] = time.monotonic() + cooldown
+            with self._result_lock:
+                self._recent_events.append(_format_recent_event(event))
             emitted += 1
 
-        self._last_detections = [detection for detection in detections if detection.display]
+        with self._result_lock:
+            self._last_detections = [detection for detection in detections if detection.display]
+            self._behavior_status_lines = behavior_status_lines
+            self._last_detection_at = time.perf_counter()
         self._last_inference_ms = total_inference_ms
+        self._inference_ema_ms = (
+            total_inference_ms if self._stats["analyzed_frames"] == 0
+            else 0.2 * total_inference_ms + 0.8 * self._inference_ema_ms
+        )
         self._stats["analyzed_frames"] += 1
         self._stats["emitted_events"] += emitted
         analyzed_frames = max(1, int(self._stats["analyzed_frames"]))
@@ -215,6 +271,35 @@ class CameraWorker(threading.Thread):
         self._stats["average_inference_ms"] = current_average + (
             total_inference_ms - current_average
         ) / analyzed_frames
+
+    def _resolve_analysis_interval(self, base_interval: float) -> float:
+        observed_inference_seconds = max(
+            float(self._last_inference_ms) / 1000.0,
+            self._inference_ema_ms / 1000.0,
+        )
+        if observed_inference_seconds <= 0:
+            return base_interval
+
+        max_interval = max(base_interval, min(3.0, max(1.0, base_interval * 6.0)))
+        adaptive_interval = observed_inference_seconds / 0.72
+        return min(max_interval, max(base_interval, adaptive_interval))
+
+    def _safe_maybe_render_frame(self, frame: Any, now: float, force: bool) -> None:
+        try:
+            self._maybe_render_frame(frame, now=now, force=force)
+            self._consecutive_render_failures = 0
+        except Exception as exc:
+            self._consecutive_render_failures += 1
+            self.logger.warning(
+                "frame_render_failed",
+                extra={
+                    "camera_id": self.camera_config.id,
+                    "error": str(exc),
+                    "consecutive_failures": self._consecutive_render_failures,
+                },
+                exc_info=True,
+            )
+            self._set_status(state="running", last_error=f"Falha ao renderizar frame: {exc}")
 
     def _maybe_render_frame(self, frame: Any, now: float, force: bool) -> None:
         if not self.display_renderer or not self.camera_config.display.enabled:
@@ -230,20 +315,25 @@ class CameraWorker(threading.Thread):
             return
 
         snapshot_at = now if now is not None else time.perf_counter()
+        with self._result_lock:
+            detections = list(self._last_detections) if snapshot_at - self._last_detection_at <= 2.0 else []
+            behavior_lines = list(self._behavior_status_lines)
+            recent_events = list(self._recent_events)
         if (snapshot_at - self._last_stream_status_at) >= 0.25:
             self._cached_stream_status = self.stream.status_snapshot()
             self._last_stream_status_at = snapshot_at
         stream_status = self._cached_stream_status
+        effective_analysis_fps = 1.0 / self._analysis_interval if self._analysis_interval > 0 else 0.0
         status_lines = [
             f"online={stream_status['online']} backend={stream_status['backend'] or 'n/a'}",
-            f"analysis_fps={self.camera_config.fps_analysis:.1f} detections={len(self._last_detections)}",
+            f"analysis_fps={effective_analysis_fps:.1f}/{self.camera_config.fps_analysis:.1f} detections={len(detections)}",
         ]
 
         if self.camera_config.display.show_metrics:
             status_lines.append(
                 f"avg_infer={self._stats['average_inference_ms']:.1f}ms last_infer={self._last_inference_ms:.1f}ms"
             )
-            status_lines.extend(self._behavior_status_lines[:1])
+            status_lines.extend(behavior_lines[:1])
 
         zones: list[tuple[str, list[tuple[int, int]]]] = []
         if self.camera_config.display.draw_zones and self.camera_config.zones:
@@ -261,10 +351,10 @@ class CameraWorker(threading.Thread):
         annotated = render_monitor_frame(
             frame=frame,
             camera_name=self.camera_config.name,
-            detections=self._last_detections,
+            detections=detections,
             zones=zones,
             status_lines=status_lines,
-            recent_events=list(self._recent_events),
+            recent_events=recent_events,
         )
         self.display_renderer.submit(
             camera_id=self.camera_config.id,
@@ -277,21 +367,22 @@ class CameraWorker(threading.Thread):
             enhance=self.camera_config.display.enhance,
         )
 
-    def _can_emit_event(self, detection: Detection, zone_name: str | None, cooldown: float) -> bool:
-        event_key = (
+    def _can_emit_event(self, detection: Detection, zone_name: str | None) -> bool:
+        now = time.monotonic()
+        if now - self._last_cooldown_cleanup >= 30.0:
+            self._last_event_at = {key: expiry for key, expiry in self._last_event_at.items() if expiry > now}
+            self._last_cooldown_cleanup = now
+        return now >= self._last_event_at.get(self._event_key(detection, zone_name), 0.0)
+
+    @staticmethod
+    def _event_key(detection: Detection, zone_name: str | None) -> tuple[Any, ...]:
+        return (
             detection.event_type,
             detection.model_alias,
             detection.label,
             zone_name or "global",
             detection.track_id if detection.track_id is not None else "no-track",
         )
-        now = time.monotonic()
-        last_emitted_at = self._last_event_at.get(event_key)
-        if last_emitted_at is not None and now - last_emitted_at < cooldown:
-            return False
-
-        self._last_event_at[event_key] = now
-        return True
 
     def _resolve_zone_name(self, detection: Detection, frame: Any) -> str | None:
         if not self.camera_config.zones:
@@ -308,13 +399,17 @@ class CameraWorker(threading.Thread):
 
         return None
 
-    def _sync_stream_status(self) -> None:
+    def _sync_stream_status(self, now: float) -> None:
+        if (now - self._last_status_sync_at) < 0.25:
+            return
+
+        self._last_status_sync_at = now
         stream_status = self.stream.status_snapshot()
         self._set_status(
             online=bool(stream_status["online"]),
             backend=stream_status["backend"],
             last_frame_at=stream_status["last_frame_at"],
-            last_error=stream_status["last_error"],
+            last_error=stream_status["last_error"] or self._analysis_error,
         )
 
     def _set_status(self, **updates: Any) -> None:

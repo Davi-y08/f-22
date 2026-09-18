@@ -1,7 +1,8 @@
 param(
     [string]$EntryPoint = "desktop_app.py",
     [string]$ExeName = "StealthLensKnifeDesktopLite",
-    [string]$PythonExe = ""
+    [string]$PythonExe = "",
+    [switch]$SkipDependencyInstall
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,10 +18,12 @@ if ([string]::IsNullOrWhiteSpace($PythonExe)) {
 
 Write-Host "Python em uso: $PythonExe"
 
-Write-Host "Atualizando pip..."
-& $PythonExe -m pip install --upgrade pip
-if ($LASTEXITCODE -ne 0) {
-    throw "Falha ao atualizar pip."
+if (-not $SkipDependencyInstall) {
+    Write-Host "Atualizando pip..."
+    & $PythonExe -m pip install --upgrade pip
+    if ($LASTEXITCODE -ne 0) {
+        throw "Falha ao atualizar pip."
+    }
 }
 
 $pythonVersion = & $PythonExe -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
@@ -29,21 +32,25 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "Python detectado: $pythonVersion"
 
-Write-Host "Instalando dependências Lite..."
-& $PythonExe -m pip install -r requirements-lite.txt
-if ($LASTEXITCODE -ne 0) {
-    throw "Falha ao instalar dependências Lite. Em geral, use Python 3.10, 3.11 ou 3.12 para maior compatibilidade."
+if (-not $SkipDependencyInstall) {
+    Write-Host "Instalando dependências Lite..."
+    & $PythonExe -m pip install -r requirements-lite.txt
+    if ($LASTEXITCODE -ne 0) {
+        throw "Falha ao instalar dependências Lite. Em geral, use Python 3.10, 3.11 ou 3.12 para maior compatibilidade."
+    }
 }
 
-Write-Host "Instalando PyInstaller..."
-& $PythonExe -m pip install pyinstaller
-if ($LASTEXITCODE -ne 0) {
-    throw "Falha ao instalar PyInstaller."
+if (-not $SkipDependencyInstall) {
+    Write-Host "Instalando PyInstaller..."
+    & $PythonExe -m pip install pyinstaller
+    if ($LASTEXITCODE -ne 0) {
+        throw "Falha ao instalar PyInstaller."
+    }
 }
 
 $workspace = (Get-Location).Path
 $buildStamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$tempRoot = Join-Path $env:TEMP "stealth-lens-build-$buildStamp"
+$tempRoot = Join-Path $env:TEMP "stealth-lens-build-$([guid]::NewGuid().ToString('N'))"
 $stageBuildDir = Join-Path $tempRoot "build"
 $stageDistRoot = Join-Path $tempRoot "dist"
 Write-Host "Build isolado em: $tempRoot"
@@ -85,7 +92,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $workspaceStageDist = Join-Path $workspace "dist\_stage_$ExeName`_$buildStamp"
 if (Test-Path $workspaceStageDist) {
-    Remove-Item -LiteralPath $workspaceStageDist -Recurse -Force
+    throw "Pasta de build ja existente: $workspaceStageDist"
 }
 New-Item -ItemType Directory -Path $workspaceStageDist | Out-Null
 Copy-Item -Path (Join-Path (Join-Path $stageDistRoot $ExeName) "*") -Destination $workspaceStageDist -Recurse -Force
@@ -117,7 +124,7 @@ if (Test-Path $liteConfig) {
 
 $portableZip = ".\dist\$ExeName-portable-$buildStamp.zip"
 if (Test-Path $portableZip) {
-    Remove-Item -LiteralPath $portableZip -Force
+    throw "Pacote ja existente: $portableZip"
 }
 Compress-Archive -Path "$distAppDir\*" -DestinationPath $portableZip
 

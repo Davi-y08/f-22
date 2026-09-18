@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.request import Request, urlopen
 
 import cv2
 import numpy as np
@@ -102,21 +103,28 @@ class UltralyticsModelSession(ModelSession):
                 "source": frame,
                 "conf": self.config.confidence,
                 "iou": self.config.iou,
+                "imgsz": self.config.input_size,
                 "verbose": False,
                 "device": self.device,
                 "persist": True,
             }
+            if self.device.startswith("cuda"):
+                track_kwargs["half"] = True
             if self.config.tracker:
                 track_kwargs["tracker"] = self.config.tracker
             results = self._model.track(**track_kwargs)
         else:
-            results = self._model.predict(
-                source=frame,
-                conf=self.config.confidence,
-                iou=self.config.iou,
-                verbose=False,
-                device=self.device,
-            )
+            predict_kwargs = {
+                "source": frame,
+                "conf": self.config.confidence,
+                "iou": self.config.iou,
+                "imgsz": self.config.input_size,
+                "verbose": False,
+                "device": self.device,
+            }
+            if self.device.startswith("cuda"):
+                predict_kwargs["half"] = True
+            results = self._model.predict(**predict_kwargs)
         inference_ms = (time.perf_counter() - started) * 1000.0
 
         if not results:
@@ -208,11 +216,11 @@ class OnnxModelSession(ModelSession):
             raise RuntimeError(f"Modelo ONNX '{self.config.alias}' sem backend de inferência disponível.")
         inference_ms = (time.perf_counter() - started) * 1000.0
         if not outputs:
-            return [], inference_ms
+            return self._track_detections([], inference_ms)
 
-        predictions = _reshape_predictions(outputs[0])
+        predictions = _reshape_predictions(outputs[0], class_count=len(self._class_names))
         if predictions.size == 0:
-            return [], inference_ms
+            return self._track_detections([], inference_ms)
 
         class_ids, confidences, boxes = _decode_predictions(
             predictions=predictions,
@@ -220,18 +228,9 @@ class OnnxModelSession(ModelSession):
             confidence_threshold=self.config.confidence,
         )
         if not boxes:
-            return [], inference_ms
+            return self._track_detections([], inference_ms)
 
-        indices = cv2.dnn.NMSBoxes(
-            bboxes=[[x1, y1, max(1, x2 - x1), max(1, y2 - y1)] for x1, y1, x2, y2 in boxes],
-            scores=confidences,
-            score_threshold=self.config.confidence,
-            nms_threshold=self.config.iou,
-        )
-        if len(indices) == 0:
-            return [], inference_ms
-
-        flattened_indices = [int(i[0]) if isinstance(i, (list, tuple, np.ndarray)) else int(i) for i in indices]
+        flattened_indices = _class_aware_nms(boxes, confidences, class_ids, self.config.confidence, self.config.iou)
         detections: list[Detection] = []
         for prediction_index in flattened_indices:
             class_id = class_ids[prediction_index]
@@ -245,6 +244,8 @@ class OnnxModelSession(ModelSession):
 
             label = _resolve_label(self._class_names, class_id)
             if self._filters and label.lower() not in self._filters:
+                continue
+            if x2 <= x1 or y2 <= y1:
                 continue
 
             detections.append(
@@ -260,9 +261,11 @@ class OnnxModelSession(ModelSession):
                 )
             )
 
-        if self._tracker is not None and detections:
-            self._tracker.assign(detections)
+        return self._track_detections(detections, inference_ms)
 
+    def _track_detections(self, detections: list[Detection], inference_ms: float) -> tuple[list[Detection], float]:
+        if self._tracker is not None:
+            self._tracker.assign(detections)
         return detections, inference_ms
 
 
@@ -456,13 +459,6 @@ def _download_file(
     logger: Any,
     model_alias: str,
 ) -> None:
-    try:
-        requests = importlib.import_module("requests")
-    except ImportError as exc:  # pragma: no cover - runtime dependency
-        raise ImportError(
-            "requests não está instalado para download automático de modelos."
-        ) from exc
-
     target.parent.mkdir(parents=True, exist_ok=True)
     temp_path = target.with_suffix(target.suffix + ".download")
     if temp_path.exists():
@@ -473,12 +469,13 @@ def _download_file(
         extra={"model_alias": model_alias, "download_url": url, "target_path": str(target)},
     )
 
-    with requests.get(url, stream=True, timeout=30) as response:
-        response.raise_for_status()
+    request = Request(url, headers={"User-Agent": "StealthLensAgent/1.0"})
+    with urlopen(request, timeout=30) as response:
         with temp_path.open("wb") as handle:
-            for chunk in response.iter_content(chunk_size=1024 * 256):
+            while True:
+                chunk = response.read(1024 * 256)
                 if not chunk:
-                    continue
+                    break
                 handle.write(chunk)
 
     if expected_sha256:
@@ -566,7 +563,7 @@ def _letterbox(
     return bordered, ratio, (dw, dh)
 
 
-def _reshape_predictions(output: Any) -> np.ndarray:
+def _reshape_predictions(output: Any, class_count: int | None = None) -> np.ndarray:
     data = np.asarray(output)
     if data.ndim == 3:
         data = data[0]
@@ -574,7 +571,10 @@ def _reshape_predictions(output: Any) -> np.ndarray:
         return np.empty((0, 0), dtype=np.float32)
 
     # ONNX export can be [84, N] or [N, 84].
-    if data.shape[0] < data.shape[1]:
+    feature_counts = {4 + class_count, 5 + class_count} if class_count else set()
+    if data.shape[1] in feature_counts:
+        pass
+    elif data.shape[0] in feature_counts or (not feature_counts and data.shape[0] < data.shape[1]):
         data = data.T
 
     return data.astype(np.float32, copy=False)
@@ -585,7 +585,7 @@ def _decode_predictions(
     class_names: tuple[str, ...],
     confidence_threshold: float,
 ) -> tuple[list[int], list[float], list[tuple[int, int, int, int]]]:
-    if predictions.shape[1] < 6:
+    if predictions.ndim != 2 or predictions.shape[1] < 5:
         return [], [], []
 
     boxes = predictions[:, :4]
@@ -605,7 +605,11 @@ def _decode_predictions(
         class_ids = np.argmax(class_scores, axis=1)
         confidences = class_scores[np.arange(class_scores.shape[0]), class_ids]
 
-    valid_mask = confidences >= confidence_threshold
+    valid_mask = (
+        np.isfinite(predictions).all(axis=1)
+        & (confidences >= confidence_threshold) & (confidences <= 1.0)
+        & (boxes[:, 2] > 0) & (boxes[:, 3] > 0)
+    )
     if not np.any(valid_mask):
         return [], [], []
 
@@ -626,6 +630,24 @@ def _decode_predictions(
         [float(value) for value in filtered_confidences.tolist()],
         converted_boxes,
     )
+
+
+def _class_aware_nms(
+    boxes: list[tuple[int, int, int, int]],
+    confidences: list[float],
+    class_ids: list[int],
+    confidence: float,
+    iou: float,
+) -> list[int]:
+    kept: list[int] = []
+    for class_id in sorted(set(class_ids)):
+        members = [index for index, value in enumerate(class_ids) if value == class_id]
+        indices = cv2.dnn.NMSBoxes(
+            [[boxes[i][0], boxes[i][1], max(1, boxes[i][2] - boxes[i][0]), max(1, boxes[i][3] - boxes[i][1])] for i in members],
+            [confidences[i] for i in members], confidence, iou, top_k=300,
+        )
+        kept.extend(members[int(index)] for index in np.asarray(indices).reshape(-1))
+    return sorted(kept, key=lambda index: confidences[index], reverse=True)[:300]
 
 
 def _scale_box_to_original(
@@ -669,6 +691,11 @@ class _SimpleTracker:
 
     def assign(self, detections: list[Detection]) -> None:
         self._frame_index += 1
+        # Expire before matching so returning objects cannot reuse stale identities.
+        self._tracks = {
+            track_id: track for track_id, track in self._tracks.items()
+            if self._frame_index - track.last_seen_frame <= self.max_stale_frames
+        }
         used_tracks: set[int] = set()
 
         for detection in sorted(detections, key=lambda item: item.confidence, reverse=True):
@@ -685,14 +712,6 @@ class _SimpleTracker:
                 bbox=detection.bbox,
                 last_seen_frame=self._frame_index,
             )
-
-        stale = [
-            track_id
-            for track_id, track in self._tracks.items()
-            if (self._frame_index - track.last_seen_frame) > self.max_stale_frames
-        ]
-        for track_id in stale:
-            self._tracks.pop(track_id, None)
 
     def _best_track_for_detection(self, detection: Detection, used_tracks: set[int]) -> int | None:
         detection_label = detection.label.lower()

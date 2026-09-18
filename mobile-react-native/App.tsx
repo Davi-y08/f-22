@@ -670,6 +670,11 @@ function EmptyState({ title }: { title: string }) {
 }
 
 function snapshotImageSource(event: DetectionEvent, token: string): ImageSourcePropType | null {
+  const publicUri = snapshotUrl(event.public_snapshot_url);
+  if (publicUri) {
+    return { uri: publicUri };
+  }
+
   const uri = snapshotUrl(event.snapshot_url);
   if (!uri) {
     return null;

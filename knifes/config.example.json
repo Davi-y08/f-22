@@ -11,6 +11,14 @@
     "snapshots_dir": "artifacts/snapshots",
     "status_path": "artifacts/status/agent-status.json"
   },
+  "cloud": {
+    "enabled": false,
+    "api_base_url": "https://api-f22.onrender.com",
+    "agent_access_key": "",
+    "sync_discovered_cameras": true,
+    "sync_events": true,
+    "timeout_seconds": 8
+  },
   "model_catalog": {
     "knife_monitor": {
       "path": "runs/detect/train/weights/best.pt",
@@ -29,6 +37,7 @@
       "emit_events": true,
       "use_tracking": true,
       "tracker": "bytetrack.yaml",
+      "input_size": 640,
       "enabled": true
     }
   },
@@ -43,7 +52,7 @@
       "fps_analysis": 3,
       "enabled": true,
       "snapshot_on_event": true,
-      "queue_maxsize": 4,
+      "queue_maxsize": 2,
       "cooldown_seconds": 4,
       "backend_preference": "auto",
       "zones": [],
@@ -53,14 +62,11 @@
         "show_metrics": true,
         "draw_zones": true,
         "max_width": null,
-        "target_fps": 30,
+        "target_fps": 24,
         "fullscreen": false,
         "fit_mode": "contain",
         "interpolation": "auto",
         "enhance": true
-      },
-      "smoking_behavior": {
-        "enabled": false
       }
     }
   ]

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+from utils.storage import atomic_write
 
 
 DEFAULT_SMOKING_MIN_FRAMES = 7
@@ -65,6 +66,13 @@ class SmokingBehaviorConfig:
     max_distance_px: int = 80
     smoke_distance_multiplier: float = 1.35
     min_frames: int = DEFAULT_SMOKING_MIN_FRAMES
+    min_evidence_frames: int = 3
+    min_cigarette_evidence_frames: int = 1
+    min_person_confidence: float = 0.25
+    min_cigarette_confidence: float = 0.28
+    min_smoke_confidence: float = 0.25
+    min_association_score: float = 0.20
+    distance_person_scale: float = 0.24
     decay_frames: int = 1
     smoke_boost_frames: int = 2
     stale_track_seconds: float = 5.0
@@ -81,7 +89,7 @@ class CameraConfig:
     fps_analysis: float = 3.0
     enabled: bool = True
     snapshot_on_event: bool = True
-    queue_maxsize: int = 4
+    queue_maxsize: int = 2
     reconnect_initial_delay: float = 2.0
     reconnect_max_delay: float = 30.0
     cooldown_seconds: float = 10.0
@@ -182,9 +190,7 @@ def load_raw_config(config_path: str | Path) -> dict[str, Any]:
 def save_raw_config(config_path: str | Path, raw_config: dict[str, Any]) -> Path:
     path = Path(config_path).expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(raw_config, handle, ensure_ascii=False, indent=2)
-        handle.write("\n")
+    atomic_write(path, (json.dumps(raw_config, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
     return path
 
 
@@ -249,7 +255,7 @@ def build_camera_entry_from_template(
     display.setdefault("show_metrics", True)
     display.setdefault("draw_zones", True)
     display.setdefault("max_width", None)
-    display.setdefault("target_fps", 30)
+    display.setdefault("target_fps", 24)
     display.setdefault("fullscreen", False)
     display.setdefault("fit_mode", "contain")
     display.setdefault("interpolation", "auto")
@@ -267,6 +273,13 @@ def build_camera_entry_from_template(
         smoking_behavior.setdefault("max_distance_px", 80)
         smoking_behavior.setdefault("smoke_distance_multiplier", 1.35)
         smoking_behavior.setdefault("min_frames", DEFAULT_SMOKING_MIN_FRAMES)
+        smoking_behavior.setdefault("min_evidence_frames", 3)
+        smoking_behavior.setdefault("min_cigarette_evidence_frames", 1)
+        smoking_behavior.setdefault("min_person_confidence", 0.25)
+        smoking_behavior.setdefault("min_cigarette_confidence", 0.28)
+        smoking_behavior.setdefault("min_smoke_confidence", 0.25)
+        smoking_behavior.setdefault("min_association_score", 0.20)
+        smoking_behavior.setdefault("distance_person_scale", 0.24)
         smoking_behavior.setdefault("decay_frames", 1)
         smoking_behavior.setdefault("smoke_boost_frames", 2)
         smoking_behavior.setdefault("stale_track_seconds", 5)
@@ -477,6 +490,13 @@ def _load_smoking_behavior_config(raw: Any) -> SmokingBehaviorConfig:
         max_distance_px=max(1, int(raw.get("max_distance_px", 80))),
         smoke_distance_multiplier=max(1.0, float(raw.get("smoke_distance_multiplier", 1.35))),
         min_frames=max(1, int(raw.get("min_frames", DEFAULT_SMOKING_MIN_FRAMES))),
+        min_evidence_frames=max(1, int(raw.get("min_evidence_frames", 3))),
+        min_cigarette_evidence_frames=max(0, int(raw.get("min_cigarette_evidence_frames", 1))),
+        min_person_confidence=_clamp_float(raw.get("min_person_confidence", 0.25), 0.0, 1.0),
+        min_cigarette_confidence=_clamp_float(raw.get("min_cigarette_confidence", 0.28), 0.0, 1.0),
+        min_smoke_confidence=_clamp_float(raw.get("min_smoke_confidence", 0.25), 0.0, 1.0),
+        min_association_score=_clamp_float(raw.get("min_association_score", 0.20), 0.0, 1.0),
+        distance_person_scale=max(0.05, float(raw.get("distance_person_scale", 0.24))),
         decay_frames=max(1, int(raw.get("decay_frames", 1))),
         smoke_boost_frames=max(0, int(raw.get("smoke_boost_frames", 2))),
         stale_track_seconds=max(1.0, float(raw.get("stale_track_seconds", 5.0))),
@@ -553,6 +573,11 @@ def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
     return float(value)
+
+
+def _clamp_float(value: Any, minimum: float, maximum: float) -> float:
+    parsed = float(value)
+    return max(minimum, min(maximum, parsed))
 
 
 def _slugify(value: str) -> str:
@@ -649,7 +674,7 @@ def _select_camera_template(raw_config: dict[str, Any]) -> dict[str, Any]:
         "fps_analysis": 3,
         "enabled": True,
         "snapshot_on_event": True,
-        "queue_maxsize": 4,
+        "queue_maxsize": 2,
         "cooldown_seconds": 10,
         "backend_preference": "auto",
         "zones": [],
@@ -659,7 +684,7 @@ def _select_camera_template(raw_config: dict[str, Any]) -> dict[str, Any]:
             "show_metrics": True,
             "draw_zones": True,
             "max_width": None,
-            "target_fps": 30,
+            "target_fps": 24,
             "fullscreen": False,
             "fit_mode": "contain",
             "interpolation": "auto",
@@ -675,6 +700,13 @@ def _select_camera_template(raw_config: dict[str, Any]) -> dict[str, Any]:
             "max_distance_px": 80,
             "smoke_distance_multiplier": 1.35,
             "min_frames": DEFAULT_SMOKING_MIN_FRAMES,
+            "min_evidence_frames": 3,
+            "min_cigarette_evidence_frames": 1,
+            "min_person_confidence": 0.25,
+            "min_cigarette_confidence": 0.28,
+            "min_smoke_confidence": 0.25,
+            "min_association_score": 0.20,
+            "distance_person_scale": 0.24,
             "decay_frames": 1,
             "smoke_boost_frames": 2,
             "stale_track_seconds": 5,
@@ -694,6 +726,7 @@ def _default_model_catalog() -> dict[str, Any]:
             "emit_events": False,
             "use_tracking": True,
             "tracker": "bytetrack.yaml",
+            "input_size": 640,
         },
     }
 
@@ -779,7 +812,7 @@ def _apply_runtime_camera_migrations(raw_config: dict[str, Any]) -> dict[str, An
         display.setdefault("fit_mode", "contain")
         display.setdefault("interpolation", "auto")
         display.setdefault("enhance", is_local_source)
-        display.setdefault("target_fps", 30)
+        display.setdefault("target_fps", 24)
         display.setdefault("fullscreen", False)
         display["fit_mode"] = _normalize_fit_mode(display.get("fit_mode"))
         display["interpolation"] = _normalize_interpolation(display.get("interpolation"))
@@ -798,6 +831,7 @@ def _build_lite_smoking_model_entry(path_value: str) -> dict[str, Any]:
         "cooldown_seconds": 8,
         "emit_events": False,
         "use_tracking": True,
+        "input_size": 640,
         "enabled": True,
     }
 

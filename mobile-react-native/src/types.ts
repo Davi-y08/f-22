@@ -40,6 +40,7 @@ export type DetectionEvent = {
   frame_size?: string;
   zone?: string;
   snapshot_path?: string;
+  public_snapshot_url?: string;
   snapshot_url?: string;
   snapshot_mime_type?: string;
   snapshot_filename?: string;

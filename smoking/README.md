@@ -116,6 +116,8 @@ Fluxo recomendado:
 As credenciais RTSP não são enviadas para a API; o distribuído remove usuário/senha das URLs antes de sincronizar.
 - `cameras`: define RTSP, FPS de análise, zonas e modelos ativos por câmera
 - `smoking_behavior`: define a heurística profissional de tabagismo por tracking e associação espacial
+- `smoking_behavior.min_evidence_frames` e `min_cigarette_evidence_frames`: exigem persistência real e evidência de cigarro antes de alertar
+- `smoking_behavior.min_*_confidence`, `min_association_score` e `distance_person_scale`: ajustam o rigor da associação entre pessoa, cigarro e fumaça
 - `storage`: define onde eventos, snapshots e status serão gravados
 
 Para usar uma câmera RTSP/IP, troque `source` para a URL RTSP e use o [config.example.json](config.example.json) como base.
@@ -195,6 +197,21 @@ Observações:
 - O `.exe` abre a GUI para descobrir câmeras, salvar no `config.json` e iniciar/parar monitoramento.
 - Para compartilhar com clientes, envie o `.zip` gerado (não envie apenas o `.exe`).
 
+## Confiabilidade e diagnostico
+
+- A exibicao usa os frames atuais enquanto uma unica analise por camera roda em paralelo. Nao ha fila crescente de inferencias.
+- A fila de envio fica em `artifacts/events/cloud-outbox.sqlite3`. Falhas temporarias sao tentadas novamente com intervalo crescente, ate 60 segundos, inclusive apos reiniciar.
+- As fotos permanecem na pasta de snapshots e sao carregadas somente na hora de enviar. Preserve essa pasta junto com a fila ao mover a instalacao.
+- A fila separa os destinos por URL, agente e chave. Uma chave diferente nao envia os alertas da chave anterior.
+- Respostas HTTP 400/413/415/422 e fotos ausentes ficam marcadas como erro para inspecao, sem bloquear os demais alertas. Nao ha reenvio automatico dessas rejeicoes.
+- A interface mostra alertas pendentes, enviados nesta sessao e com erro; os mesmos dados ficam no campo `cloud` do arquivo de status.
+- Fotos, configuracao e status sao gravados por substituicao atomica. O horario do alerta corresponde a captura do frame.
+- O processamento ONNX preserva objetos de classes diferentes em sobreposicao e expira rastreamentos mesmo nos frames sem deteccoes.
+
+O codigo da API no projeto `../api` tambem foi ajustado para reconhecer o mesmo evento reenviado e notificar uma unica vez. Publique essa atualizacao da API antes de utilizar o reenvio em producao; ela utiliza a chave primaria existente, sem nova tabela.
+
+Validacao automatizada: `python -m unittest discover -s tests`. Os testes simulam desconexao, reinicio, erros de foto, falha de gravacao e inferencia lenta. A precisao final deve ser avaliada com imagens reais das cameras.
+
 ## Saídas
 
 - Eventos: `artifacts/events/events-YYYY-MM-DD.jsonl`
@@ -210,6 +227,7 @@ Observações:
 - `display` agora suporta modo profissional por câmera: `fullscreen`, `fit_mode` (`contain`/`cover`/`stretch`), `interpolation` e `enhance`
 - `display.target_fps` permite limitar FPS de renderização por câmera (recomendado `20-30` para estabilidade com 3+ câmeras)
 - O runtime aplica tuning automático de threads (OpenCV/ONNX/Torch CPU) para reduzir travamentos em multi-câmera sem perda de qualidade de detecção
+- O worker adapta o FPS efetivo de análise quando a inferência fica pesada, mantendo a câmera fluida e descartando frames antigos em vez de acumular atraso
 - O motor ONNX é compartilhado entre câmeras que usam o mesmo modelo, reduzindo memória e tempo de inicialização em instalações multi-câmera
 - URLs RTSP com usuário/senha são mascaradas em logs e mensagens de erro
 - A descoberta de câmeras usa cache curto, varredura concorrente com timeouts e evita repetir testes de stream validados recentemente

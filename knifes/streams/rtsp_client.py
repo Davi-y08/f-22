@@ -37,14 +37,14 @@ class RTSPClient:
         self,
         source: str | int,
         backend_preference: str = "auto",
-        queue_maxsize: int = 4,
+        queue_maxsize: int = 2,
         reconnect_initial_delay: float = 2.0,
         reconnect_max_delay: float = 30.0,
         logger: Any | None = None,
     ) -> None:
         self.source = source
         self.backend_preference = backend_preference
-        self.queue_maxsize = queue_maxsize
+        self.queue_maxsize = max(1, int(queue_maxsize))
         self.reconnect_initial_delay = reconnect_initial_delay
         self.reconnect_max_delay = reconnect_max_delay
         self.logger = logger
@@ -68,13 +68,16 @@ class RTSPClient:
             return
 
         self._stop_event.clear()
+        self._clear_frames()
         self._thread = threading.Thread(target=self._reader_loop, name="rtsp-reader", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
         self._stop_event.set()
         if self._thread:
-            self._thread.join(timeout=5)
+            self._thread.join(timeout=6)
+        self._clear_frames()
+        self._set_status(online=False)
 
     def read_latest(self, timeout: float = 1.0) -> FramePacket | None:
         try:
@@ -85,6 +88,7 @@ class RTSPClient:
         while True:
             try:
                 packet = self._frames.get_nowait()
+                self._increment_status_counter("dropped_frames")
             except queue.Empty:
                 return packet
 
@@ -103,16 +107,18 @@ class RTSPClient:
             try:
                 reader = self._build_reader(current_preference)
                 reader.open()
-                delay = self.reconnect_initial_delay
                 current_preference = self.backend_preference
                 self._set_status(
-                    online=True,
+                    online=False,
                     backend=reader.backend_name,
                     last_error=None,
                 )
 
                 while not self._stop_event.is_set():
                     frame = reader.read()
+                    if self._stop_event.is_set():
+                        break
+                    delay = self.reconnect_initial_delay
                     packet = FramePacket(
                         frame_id=self._next_frame_id(),
                         frame=frame,
@@ -126,6 +132,7 @@ class RTSPClient:
                         last_error=None,
                     )
             except Exception as exc:
+                self._clear_frames()
                 status = self.status_snapshot()
                 if (
                     reader is not None
@@ -150,11 +157,16 @@ class RTSPClient:
                     )
                 else:
                     retry_in_seconds = _jittered_delay(delay)
-                self._sleep_with_stop(retry_in_seconds)
-                delay = min(delay * 2, self.reconnect_max_delay)
             finally:
                 if reader is not None:
-                    reader.close()
+                    try:
+                        reader.close()
+                    except Exception as exc:
+                        if self.logger:
+                            self.logger.warning("stream_close_failed", extra={"error": str(exc)})
+            if not self._stop_event.is_set():
+                self._sleep_with_stop(retry_in_seconds)
+                delay = min(delay * 2, self.reconnect_max_delay)
 
         self._set_status(online=False)
 
@@ -181,14 +193,25 @@ class RTSPClient:
         return _OpenCVReader(self.source)
 
     def _push_frame(self, packet: FramePacket) -> None:
-        if self._frames.full():
+        while self._frames.full():
             try:
                 self._frames.get_nowait()
-                status = self.status_snapshot()
-                self._set_status(dropped_frames=int(status["dropped_frames"]) + 1)
+                self._increment_status_counter("dropped_frames")
             except queue.Empty:
-                pass
-        self._frames.put_nowait(packet)
+                break
+
+        try:
+            self._frames.put_nowait(packet)
+        except queue.Full:
+            self._increment_status_counter("dropped_frames")
+
+    def _clear_frames(self) -> None:
+        while True:
+            try:
+                self._frames.get_nowait()
+                self._increment_status_counter("dropped_frames")
+            except queue.Empty:
+                return
 
     def _next_frame_id(self) -> int:
         self._frame_counter += 1
@@ -198,10 +221,12 @@ class RTSPClient:
         with self._status_lock:
             self._status.update(updates)
 
+    def _increment_status_counter(self, key: str) -> None:
+        with self._status_lock:
+            self._status[key] = int(self._status.get(key, 0)) + 1
+
     def _sleep_with_stop(self, seconds: float) -> None:
-        deadline = time.time() + seconds
-        while time.time() < deadline and not self._stop_event.is_set():
-            time.sleep(0.2)
+        self._stop_event.wait(max(0.0, seconds))
 
 
 class _BaseReader:
@@ -226,9 +251,10 @@ class _OpenCVReader(_BaseReader):
 
     def open(self) -> None:
         if isinstance(self.source, str):
-            os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
+            _configure_network_capture_options()
             self.capture = _create_network_capture(self.source, cv2.CAP_FFMPEG)
             if not self.capture or not self.capture.isOpened():
+                self.close()
                 self.capture = _create_network_capture(self.source, None)
         else:
             self.capture, self.backend_name = _open_local_capture(int(self.source))
@@ -239,7 +265,7 @@ class _OpenCVReader(_BaseReader):
             )
 
         try:
-            self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+            self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         except Exception:
             pass
 
@@ -248,16 +274,17 @@ class _OpenCVReader(_BaseReader):
             raise StreamReadError("Stream OpenCV não inicializado.")
 
         last_error: Exception | None = None
-        for _ in range(2):
+        attempts = 5 if isinstance(self.source, int) else 2
+        for _ in range(attempts):
             try:
                 success, frame = self.capture.read()
             except Exception as exc:
                 last_error = exc
-                time.sleep(0.02)
+                time.sleep(0.015)
                 continue
             if success and frame is not None:
                 return frame
-            time.sleep(0.02)
+            time.sleep(0.015)
 
         if last_error is not None:
             raise StreamReadError(
@@ -268,6 +295,7 @@ class _OpenCVReader(_BaseReader):
     def close(self) -> None:
         if self.capture is not None:
             self.capture.release()
+            self.capture = None
 
 
 class _PyAVReader(_BaseReader):
@@ -286,10 +314,12 @@ class _PyAVReader(_BaseReader):
         try:
             self.container = av.open(
                 self.source,
+                timeout=(5.0, 5.0),
                 options={
                     "rtsp_transport": "tcp",
                     "fflags": "nobuffer",
                     "flags": "low_delay",
+                    "max_delay": "500000",
                     "stimeout": "5000000",
                 },
             )
@@ -314,6 +344,8 @@ class _PyAVReader(_BaseReader):
     def close(self) -> None:
         if self.container is not None:
             self.container.close()
+            self.container = None
+            self.frames = None
 
 
 def test_stream_source(
@@ -337,9 +369,11 @@ def test_stream_source(
 
     preference = backend_preference.lower()
     if preference in {"auto", "pyav"} and av is not None:
+        container = None
         try:
             container = av.open(
                 source,
+                timeout=(timeout_seconds, timeout_seconds),
                 options={
                     "rtsp_transport": "tcp",
                     "fflags": "nobuffer",
@@ -349,21 +383,25 @@ def test_stream_source(
             )
             video_stream = next(stream for stream in container.streams if stream.type == "video")
             frame = next(container.decode(video_stream))
-            container.close()
             return frame is not None
         except Exception:
             if preference == "pyav":
                 return False
+        finally:
+            if container is not None:
+                container.close()
 
-    os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
-    capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+    _configure_network_capture_options()
+    capture = _create_network_capture(source, cv2.CAP_FFMPEG)
     try:
         if not capture or not capture.isOpened():
-            capture = cv2.VideoCapture(source)
+            if capture is not None:
+                capture.release()
+            capture = _create_network_capture(source, None)
             if not capture or not capture.isOpened():
                 return False
-        started = time.time()
-        while (time.time() - started) < timeout_seconds:
+        started = time.monotonic()
+        while (time.monotonic() - started) < timeout_seconds:
             success, frame = capture.read()
             if success and frame is not None:
                 return True
@@ -432,6 +470,8 @@ def _open_local_capture(source_index: int) -> tuple[cv2.VideoCapture, str]:
     for backend_name, backend_id in _iter_local_backends():
         capture = _create_local_capture(source_index, backend_id)
         if capture is None or not capture.isOpened():
+            if capture is not None:
+                capture.release()
             attempts.append(f"{backend_name}:open_failed")
             continue
 
@@ -508,6 +548,13 @@ def _create_network_capture(source: str, backend_id: int | None) -> cv2.VideoCap
             return cv2.VideoCapture(source)
         except Exception:
             return None
+
+
+def _configure_network_capture_options() -> None:
+    os.environ.setdefault(
+        "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+        "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|max_delay;500000|stimeout;5000000",
+    )
 
 
 def _jittered_delay(base_delay: float) -> float:

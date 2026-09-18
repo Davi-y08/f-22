@@ -14,6 +14,7 @@ from runtime.tuning import apply_runtime_tuning
 from utils.config import AgentConfig
 from utils.logger import get_logger
 from utils.redaction import redact_url_credentials
+from utils.storage import atomic_write
 
 
 class AgentManager:
@@ -21,7 +22,10 @@ class AgentManager:
         self.config = config
         self.logger = get_logger("stealth_lens.manager")
         self.cloud_client = (
-            CloudClient(self.config.cloud, agent_id=self.config.agent_id, logger=self.logger)
+            CloudClient(
+                self.config.cloud, agent_id=self.config.agent_id, logger=self.logger,
+                outbox_path=self.config.storage.events_dir / "cloud-outbox.sqlite3",
+            )
             if self.config.cloud.enabled
             else None
         )
@@ -160,19 +164,22 @@ class AgentManager:
                 "online_cameras": online_cameras,
             },
             "cameras": cameras,
+            "cloud": self.cloud_client.status_snapshot() if self.cloud_client else {"enabled": False},
         }
 
     def _status_loop(self) -> None:
         while not self._stop_event.wait(self.config.status_interval_seconds):
-            self._write_status_snapshot()
+            try:
+                self._write_status_snapshot()
+            except OSError as exc:
+                self.logger.warning("status_write_failed", extra={"error": str(exc)})
 
     def _write_status_snapshot(self) -> None:
         status_payload = self.status_snapshot()
         status_path = self.config.storage.status_path
         status_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with status_path.open("w", encoding="utf-8") as handle:
-            json.dump(status_payload, handle, ensure_ascii=False, indent=2)
+        atomic_write(status_path, json.dumps(status_payload, ensure_ascii=False, indent=2).encode("utf-8"))
 
 
 def _camera_source_key(source: Any) -> str:

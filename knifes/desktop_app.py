@@ -7,12 +7,14 @@ import sys
 import threading
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import tkinter as tk
 from tkinter import messagebox
 from tkinter import ttk
 
 from agent.manager import AgentManager
+from cloud.client import CloudClient
 from discovery.service import (
     DiscoveredCamera,
     describe_camera,
@@ -72,6 +74,47 @@ def _camera_startup_failed(camera_status: dict[str, Any]) -> bool:
     return reconnect_attempts > 0 and bool(last_error)
 
 
+DEFAULT_CLOUD_API_BASE_URL = "https://api-f22.onrender.com"
+
+
+def _normalize_cloud_api_url(value: str) -> str:
+    api_url = str(value or "").strip().rstrip("/") or DEFAULT_CLOUD_API_BASE_URL
+    parsed = urlsplit(api_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Informe uma URL de API válida, começando com http:// ou https://.")
+    return api_url
+
+
+def _normalize_agent_id(value: str) -> str:
+    agent_id = str(value or "").strip() or "stealth-lens-local"
+    if len(agent_id) > 120:
+        raise ValueError("O ID do agente deve ter no máximo 120 caracteres.")
+    return agent_id
+
+
+def _cloud_settings_from_fields(
+    *,
+    enabled: bool,
+    api_url: str,
+    agent_access_key: str,
+) -> dict[str, Any]:
+    clean_api_url = _normalize_cloud_api_url(api_url)
+    clean_access_key = str(agent_access_key or "").strip()
+    should_enable = bool(enabled or clean_access_key)
+
+    if should_enable and not clean_access_key:
+        raise ValueError("Cole a chave/código gerado no site para ativar o envio para a API.")
+
+    return {
+        "enabled": should_enable,
+        "api_base_url": clean_api_url,
+        "agent_access_key": clean_access_key,
+        "sync_discovered_cameras": True,
+        "sync_events": True,
+        "timeout_seconds": 8,
+    }
+
+
 class StealthLensDesktopApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -82,6 +125,11 @@ class StealthLensDesktopApp:
         self.runtime_base_dir = _runtime_base_dir()
         default_config = (self.runtime_base_dir / "config.json").resolve()
         self.config_path_var = tk.StringVar(value=str(default_config))
+        self.agent_id_var = tk.StringVar(value="stealth-lens-local")
+        self.cloud_enabled_var = tk.BooleanVar(value=False)
+        self.cloud_sync_status_var = tk.StringVar(value="Alertas: aguardando monitoramento.")
+        self.cloud_api_url_var = tk.StringVar(value=DEFAULT_CLOUD_API_BASE_URL)
+        self.cloud_key_var = tk.StringVar(value="")
         self.camera_name_var = tk.StringVar(value="")
         self.username_var = tk.StringVar(value="")
         self.password_var = tk.StringVar(value="")
@@ -102,6 +150,7 @@ class StealthLensDesktopApp:
         self._auto_start_after_save = False
 
         self._config_bootstrap_message = self._bootstrap_config_file()
+        self._load_cloud_settings_from_config()
         self._configure_logging()
         self.logger = get_logger("stealth_lens.desktop")
 
@@ -123,6 +172,62 @@ class StealthLensDesktopApp:
             level=str(logging_config.get("level", "INFO")),
             json_output=bool(logging_config.get("json", True)),
         )
+
+    def _load_cloud_settings_from_config(self) -> None:
+        raw = load_raw_config(self.config_path_var.get())
+        cloud = raw.get("cloud", {}) if isinstance(raw, dict) else {}
+        if not isinstance(cloud, dict):
+            cloud = {}
+
+        self.agent_id_var.set(str(raw.get("agent_id", "stealth-lens-local") or "stealth-lens-local"))
+        self.cloud_enabled_var.set(bool(cloud.get("enabled", False)))
+        self.cloud_api_url_var.set(str(cloud.get("api_base_url", "") or DEFAULT_CLOUD_API_BASE_URL))
+        self.cloud_key_var.set(str(cloud.get("agent_access_key", "") or ""))
+
+    def _save_cloud_settings_to_config(self) -> None:
+        self._persist_cloud_settings(show_success=True)
+
+    def _persist_cloud_settings(self, show_success: bool = False) -> bool:
+        try:
+            agent_id = _normalize_agent_id(self.agent_id_var.get())
+            cloud_settings = _cloud_settings_from_fields(
+                enabled=bool(self.cloud_enabled_var.get()),
+                api_url=self.cloud_api_url_var.get(),
+                agent_access_key=self.cloud_key_var.get(),
+            )
+        except ValueError as exc:
+            self._set_status("Conexão com o site incompleta.")
+            self._append_log(f"Conexão com o site não salva: {exc}")
+            messagebox.showwarning("Stealth Lens Knife", str(exc))
+            return False
+
+        raw = load_raw_config(self.config_path_var.get())
+        raw["agent_id"] = agent_id
+        raw["cloud"] = cloud_settings
+
+        save_raw_config(self.config_path_var.get(), raw)
+        self.agent_id_var.set(agent_id)
+        self.cloud_enabled_var.set(bool(cloud_settings["enabled"]))
+        self.cloud_api_url_var.set(str(cloud_settings["api_base_url"]))
+        self.cloud_key_var.set(str(cloud_settings["agent_access_key"]))
+
+        state_label = "ativa" if cloud_settings["enabled"] else "desativada"
+        self._append_log(f"Conexão com o site salva no config ({state_label}).")
+        self._set_status(f"Conexão com o site {state_label}.")
+        if show_success:
+            messagebox.showinfo("Stealth Lens Knife", f"Conexão com o site salva ({state_label}).")
+        return True
+
+    def _cloud_client_from_config(self) -> CloudClient | None:
+        config = load_config(self.config_path_var.get())
+        if not config.cloud.enabled:
+            return None
+        _cloud_settings_from_fields(
+            enabled=True,
+            api_url=config.cloud.api_base_url,
+            agent_access_key=config.cloud.agent_access_key,
+        )
+        return CloudClient(config.cloud, agent_id=config.agent_id, logger=self.logger)
 
     def _bootstrap_config_file(self) -> str | None:
         config_path = Path(self.config_path_var.get()).expanduser().resolve()
@@ -263,6 +368,63 @@ class StealthLensDesktopApp:
         )
         save_button.grid(row=1, column=3, padx=(4, 0), sticky="ew")
         self.save_button = save_button
+
+        cloud_panel = ttk.Frame(wrapper, style="Panel.TFrame", padding=12)
+        cloud_panel.pack(fill="x", pady=(10, 0))
+        cloud_panel.columnconfigure(1, weight=1)
+        cloud_panel.columnconfigure(2, weight=1)
+        cloud_panel.columnconfigure(3, weight=1)
+        cloud_panel.columnconfigure(4, weight=0)
+
+        ttk.Label(
+            cloud_panel,
+            text="Conexão com API / Site",
+            style="Body.TLabel",
+        ).grid(row=0, column=0, columnspan=5, sticky="w", pady=(0, 6))
+
+        ttk.Checkbutton(
+            cloud_panel,
+            text="Enviar alertas para API",
+            variable=self.cloud_enabled_var,
+        ).grid(row=1, column=0, sticky="w", padx=(0, 10))
+
+        ttk.Label(cloud_panel, text="URL da API", style="Body.TLabel").grid(row=1, column=1, sticky="w")
+        ttk.Entry(cloud_panel, textvariable=self.cloud_api_url_var).grid(
+            row=2, column=1, sticky="ew", padx=(0, 10)
+        )
+
+        ttk.Label(cloud_panel, text="ID deste agente", style="Body.TLabel").grid(row=1, column=2, sticky="w")
+        ttk.Entry(cloud_panel, textvariable=self.agent_id_var).grid(
+            row=2, column=2, sticky="ew", padx=(0, 10)
+        )
+
+        ttk.Label(cloud_panel, text="Chave/código do site", style="Body.TLabel").grid(row=1, column=3, sticky="w")
+        ttk.Entry(cloud_panel, textvariable=self.cloud_key_var, show="*").grid(
+            row=2, column=3, sticky="ew", padx=(0, 10)
+        )
+
+        ttk.Button(
+            cloud_panel,
+            text="Salvar Conexão",
+            command=self._save_cloud_settings_to_config,
+            style="Action.TButton",
+        ).grid(row=2, column=4, sticky="ew")
+
+        ttk.Button(
+            cloud_panel,
+            text="API Oficial",
+            command=self._fill_default_cloud_api_url,
+            style="Action.TButton",
+        ).grid(row=1, column=4, sticky="ew", pady=(0, 4))
+
+        ttk.Label(
+            cloud_panel,
+            text="Cole aqui a chave gerada no site em 'Chave do distribuído'. Se você colar uma chave, o envio para a API é ativado automaticamente.",
+            style="Body.TLabel",
+            wraplength=980,
+        ).grid(row=3, column=0, columnspan=5, sticky="w", pady=(8, 0))
+        ttk.Label(cloud_panel, textvariable=self.cloud_sync_status_var, style="Body.TLabel",
+                  wraplength=980).grid(row=4, column=0, columnspan=5, sticky="w", pady=(6, 0))
 
         content = ttk.Frame(wrapper, style="App.TFrame")
         content.pack(fill="both", expand=True, pady=(12, 8))
@@ -423,6 +585,10 @@ class StealthLensDesktopApp:
         self.show_advanced_var.set(True)
         self.advanced_toggle_button.configure(text="Ocultar Opções Avançadas ▴")
 
+    def _fill_default_cloud_api_url(self) -> None:
+        self.cloud_api_url_var.set(DEFAULT_CLOUD_API_BASE_URL)
+        self._set_status("URL oficial da API preenchida.")
+
     def _save_and_start_selected_camera(self) -> None:
         if self._busy:
             return
@@ -430,6 +596,8 @@ class StealthLensDesktopApp:
 
     def _start_discovery(self) -> None:
         if self._busy:
+            return
+        if not self._persist_cloud_settings(show_success=False):
             return
         self._set_busy(True)
         self._set_status("Descobrindo câmeras na rede...")
@@ -444,6 +612,46 @@ class StealthLensDesktopApp:
             self._event_queue.put(("error", f"Falha na descoberta: {exc}"))
         finally:
             self._event_queue.put(("busy", False))
+
+    def _sync_discovered_to_cloud_worker(self, cameras: list[DiscoveredCamera]) -> None:
+        cloud_client: CloudClient | None = None
+        try:
+            cloud_client = self._cloud_client_from_config()
+            if cloud_client is None or not cloud_client.enabled:
+                return
+            result = cloud_client.sync_discovered_cameras(cameras)
+            self._event_queue.put(("cloud-sync-result", result.message))
+        except Exception as exc:
+            self._event_queue.put(("cloud-sync-result", f"Falha ao sincronizar com site: {exc}"))
+        finally:
+            if cloud_client is not None:
+                cloud_client.close()
+
+    def _sync_saved_camera_to_cloud(
+        self,
+        *,
+        camera_key: str,
+        camera_name: str,
+        source: str | int,
+        validated: bool,
+    ) -> str | None:
+        cloud_client: CloudClient | None = None
+        try:
+            cloud_client = self._cloud_client_from_config()
+            if cloud_client is None or not cloud_client.enabled:
+                return None
+            result = cloud_client.sync_configured_camera(
+                external_id=camera_key,
+                name=camera_name,
+                source=source,
+                status="online" if validated else "unknown",
+            )
+            return result.message
+        except Exception as exc:
+            return f"Falha ao sincronizar com site: {exc}"
+        finally:
+            if cloud_client is not None:
+                cloud_client.close()
 
     def _validate_selected_camera(self) -> None:
         if self._busy:
@@ -475,6 +683,8 @@ class StealthLensDesktopApp:
 
     def _save_selected_camera(self, auto_start: bool = False) -> None:
         if self._busy:
+            return
+        if not self._persist_cloud_settings(show_success=False):
             return
         self._auto_start_after_save = bool(auto_start)
         camera = self._selected_camera()
@@ -517,6 +727,12 @@ class StealthLensDesktopApp:
                 source=result.source,
                 camera_key=camera.key,
             )
+            cloud_message = self._sync_saved_camera_to_cloud(
+                camera_key=camera.key,
+                camera_name=camera_name,
+                source=result.source,
+                validated=result.validated,
+            )
             self._event_queue.put(
                 (
                     "saved",
@@ -525,6 +741,7 @@ class StealthLensDesktopApp:
                         "name": camera_name,
                         "source": result.source,
                         "validated": result.validated,
+                        "cloud_message": cloud_message,
                     },
                 )
             )
@@ -538,9 +755,13 @@ class StealthLensDesktopApp:
             messagebox.showinfo("Stealth Lens Knife", "O monitoramento já está em execução.")
             return
 
+        if not self._persist_cloud_settings(show_success=False):
+            return
+
         config_path = self.config_path_var.get().strip() or "config.json"
         self._configure_logging()
         self._append_log(f"Iniciando monitoramento com config: {config_path}")
+        self._append_log(self._cloud_status_message())
         self._append_log("Atalhos da janela de vídeo: F alterna fullscreen, Q/Esc encerra monitoramento.")
         self._set_status("Inicializando monitoramento...")
         self._monitor_stop.clear()
@@ -603,8 +824,13 @@ class StealthLensDesktopApp:
                 )
                 raise RuntimeError(f"Todas as câmeras falharam ao iniciar. {details}")
 
+            previous_cloud_status = None
             while not self._monitor_stop.is_set() and not manager.should_stop:
-                time.sleep(0.25)
+                cloud_status = manager.status_snapshot().get("cloud", {})
+                if cloud_status != previous_cloud_status:
+                    self._event_queue.put(("cloud-event-status", cloud_status))
+                    previous_cloud_status = cloud_status
+                self._monitor_stop.wait(1.0)
         except Exception as exc:
             self._event_queue.put(("error", f"Falha ao iniciar monitoramento: {exc}"))
         finally:
@@ -623,6 +849,16 @@ class StealthLensDesktopApp:
             raise ValueError("Nenhuma câmera habilitada no config. Descubra/salve uma câmera antes de iniciar.")
 
         issues: list[str] = []
+        if config.cloud.enabled:
+            try:
+                _cloud_settings_from_fields(
+                    enabled=True,
+                    api_url=config.cloud.api_base_url,
+                    agent_access_key=config.cloud.agent_access_key,
+                )
+            except ValueError as exc:
+                issues.append(f"Conexão com API/site inválida: {exc}")
+
         for camera in enabled_cameras:
             if not camera.models:
                 issues.append(f"{camera.name}: sem modelos configurados.")
@@ -647,6 +883,17 @@ class StealthLensDesktopApp:
             preview = "\n".join(issues[:8])
             raise FileNotFoundError(f"Config inválido para monitoramento:\n{preview}")
 
+    def _cloud_status_message(self) -> str:
+        try:
+            config = load_config(self.config_path_var.get().strip() or "config.json")
+        except Exception:
+            return "Conexão com API/site: não foi possível ler o config."
+
+        if not config.cloud.enabled:
+            return "Conexão com API/site desativada: alertas ficarão somente neste computador."
+
+        return f"Conexão com API/site ativa: {redact_url_credentials(config.cloud.api_base_url)}"
+
     def _stop_monitoring(self) -> None:
         self._monitor_stop.set()
         self._set_status("Encerrando monitoramento...")
@@ -669,6 +916,15 @@ class StealthLensDesktopApp:
             total = len(self._discovered)
             self._set_status(f"Descoberta concluída: {total} câmera(s).")
             self._append_log(f"Descoberta concluída com {total} câmera(s).")
+            config = load_config(self.config_path_var.get())
+            if config.cloud.enabled and config.cloud.sync_discovered_cameras and self._discovered:
+                self._append_log("Sincronizando câmeras descobertas com o site.")
+                threading.Thread(
+                    target=self._sync_discovered_to_cloud_worker,
+                    args=(list(self._discovered),),
+                    name="cloud-discovery-sync-worker",
+                    daemon=True,
+                ).start()
             return
 
         if event_name == "validation-result":
@@ -691,6 +947,8 @@ class StealthLensDesktopApp:
                 f"Câmera '{payload['name']}' salva com source={redact_url_credentials(payload['source'])} "
                 f"(validated={payload['validated']})."
             )
+            if payload.get("cloud_message"):
+                self._append_log(str(payload["cloud_message"]))
             messagebox.showinfo(
                 "Stealth Lens Knife",
                 f"Câmera salva com sucesso em:\n{payload['path']}",
@@ -713,6 +971,24 @@ class StealthLensDesktopApp:
 
         if event_name == "monitor-startup-summary":
             self._append_log(str(payload))
+            return
+
+        if event_name == "cloud-sync-result":
+            self._append_log(str(payload))
+            return
+
+        if event_name == "cloud-event-status":
+            if not payload.get("enabled"):
+                self.cloud_sync_status_var.set("Alertas: envio para API desativado.")
+            else:
+                status = (
+                    f"Alertas: {payload.get('pending_events', 0)} pendentes | "
+                    f"{payload.get('synced_events', 0)} enviados nesta sessao | "
+                    f"{payload.get('failed_events', 0)} com erro"
+                )
+                if payload.get("last_error"):
+                    status += f" | {payload['last_error']}"
+                self.cloud_sync_status_var.set(status)
             return
 
         if event_name == "monitor-ui-reset":

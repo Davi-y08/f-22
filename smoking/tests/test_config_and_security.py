@@ -65,6 +65,9 @@ class ConfigLoadingTests(unittest.TestCase):
             config = load_config(config_path)
 
         self.assertEqual(config.cameras[0].smoking_behavior.min_frames, 7)
+        self.assertEqual(config.cameras[0].smoking_behavior.min_evidence_frames, 3)
+        self.assertEqual(config.cameras[0].smoking_behavior.min_cigarette_evidence_frames, 1)
+        self.assertEqual(config.cameras[0].smoking_behavior.min_cigarette_confidence, 0.28)
 
     def test_display_target_fps_is_clamped(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

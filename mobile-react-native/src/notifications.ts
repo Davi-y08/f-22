@@ -122,7 +122,7 @@ export async function scheduleLocalAlertNotification(event: DetectionEvent) {
       data: {
         camera_name: event.camera_name,
         event_id: event.id,
-        snapshot_url: event.snapshot_url ?? "",
+        snapshot_url: event.public_snapshot_url ?? event.snapshot_url ?? "",
       },
       sound: "default",
       title: `Alerta em ${event.camera_name || "câmera"}`,

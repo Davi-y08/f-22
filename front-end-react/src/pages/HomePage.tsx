@@ -811,6 +811,7 @@ function AlertCard({
         className="h-36 w-full rounded-lg object-cover sm:h-full"
         fallbackClassName="h-36 w-full rounded-lg sm:h-full"
         snapshotPath={event.snapshot_url}
+        publicSnapshotPath={event.public_snapshot_url}
       />
       <div className="flex min-w-0 flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -897,6 +898,7 @@ function AlertModal({
             className="aspect-video w-full rounded-lg object-cover"
             fallbackClassName="aspect-video w-full rounded-lg"
             snapshotPath={event.snapshot_url}
+            publicSnapshotPath={event.public_snapshot_url}
           />
 
           <div className="grid content-start gap-4">
@@ -917,30 +919,33 @@ function SnapshotImage({
   alt,
   className,
   fallbackClassName,
+  publicSnapshotPath,
   snapshotPath,
 }: {
   alt: string;
   className: string;
   fallbackClassName: string;
+  publicSnapshotPath?: string;
   snapshotPath?: string;
 }) {
   const [objectUrl, setObjectUrl] = useState("");
+  const resolvedSnapshotPath = publicSnapshotPath || snapshotPath;
   const [state, setState] = useState<"empty" | "failed" | "loading" | "ready">(
-    snapshotPath ? "loading" : "empty",
+    resolvedSnapshotPath ? "loading" : "empty",
   );
 
   useEffect(() => {
     let active = true;
     let createdUrl = "";
 
-    if (!snapshotPath) {
+    if (!resolvedSnapshotPath) {
       setObjectUrl("");
       setState("empty");
       return () => undefined;
     }
 
     setState("loading");
-    fetchApiAssetBlob(snapshotPath)
+    fetchApiAssetBlob(resolvedSnapshotPath)
       .then((blob) => {
         createdUrl = URL.createObjectURL(blob);
         if (!active) {
@@ -964,7 +969,7 @@ function SnapshotImage({
         URL.revokeObjectURL(createdUrl);
       }
     };
-  }, [snapshotPath]);
+  }, [resolvedSnapshotPath]);
 
   if (state === "ready" && objectUrl) {
     return <img alt={alt} className={className} src={objectUrl} />;

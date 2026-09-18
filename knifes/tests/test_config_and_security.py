@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from desktop_app import DEFAULT_CLOUD_API_BASE_URL, _cloud_settings_from_fields
 from utils.config import load_config
 from utils.redaction import redact_url_credentials
 
@@ -64,6 +65,50 @@ class ConfigLoadingTests(unittest.TestCase):
             config = load_config(config_path)
 
         self.assertEqual(config.cameras[0].display.target_fps, 60.0)
+
+    def test_cloud_config_keeps_empty_access_key_slot(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "agent_id": "test-agent",
+                        "cloud": {
+                            "enabled": True,
+                            "api_base_url": "http://localhost:8080/",
+                            "agent_access_key": "",
+                        },
+                        "model_catalog": {},
+                        "cameras": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+        self.assertTrue(config.cloud.enabled)
+        self.assertEqual(config.cloud.api_base_url, "http://localhost:8080")
+        self.assertEqual(config.cloud.agent_access_key, "")
+
+    def test_cloud_ui_settings_auto_enable_when_key_is_present(self) -> None:
+        settings = _cloud_settings_from_fields(
+            enabled=False,
+            api_url="",
+            agent_access_key="slk_test",
+        )
+
+        self.assertTrue(settings["enabled"])
+        self.assertEqual(settings["api_base_url"], DEFAULT_CLOUD_API_BASE_URL)
+        self.assertEqual(settings["agent_access_key"], "slk_test")
+
+    def test_cloud_ui_settings_reject_enabled_without_key(self) -> None:
+        with self.assertRaises(ValueError):
+            _cloud_settings_from_fields(
+                enabled=True,
+                api_url="https://api.example.test",
+                agent_access_key="",
+            )
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+from utils.storage import atomic_write
 
 
 @dataclass(frozen=True)
@@ -78,7 +79,7 @@ class CameraConfig:
     fps_analysis: float = 3.0
     enabled: bool = True
     snapshot_on_event: bool = True
-    queue_maxsize: int = 4
+    queue_maxsize: int = 2
     reconnect_initial_delay: float = 2.0
     reconnect_max_delay: float = 30.0
     cooldown_seconds: float = 10.0
@@ -102,12 +103,23 @@ class StorageConfig:
 
 
 @dataclass(frozen=True)
+class CloudConfig:
+    enabled: bool = False
+    api_base_url: str = ""
+    agent_access_key: str = ""
+    sync_discovered_cameras: bool = True
+    sync_events: bool = True
+    timeout_seconds: float = 8.0
+
+
+@dataclass(frozen=True)
 class AgentConfig:
     agent_id: str
     base_dir: Path
     device: str
     logging: LoggingConfig
     storage: StorageConfig
+    cloud: CloudConfig
     model_catalog: dict[str, ModelConfig] = field(default_factory=dict)
     cameras: tuple[CameraConfig, ...] = ()
     status_interval_seconds: float = 15.0
@@ -122,6 +134,7 @@ def load_config(config_path: str | Path) -> AgentConfig:
     raw = _apply_runtime_camera_migrations(raw)
     logging_cfg = _load_logging_config(raw.get("logging", {}))
     storage_cfg = _load_storage_config(base_dir, raw.get("storage", {}))
+    cloud_cfg = _load_cloud_config(raw.get("cloud", {}))
     model_catalog = _load_model_catalog(base_dir, raw.get("model_catalog", {}))
 
     cameras_raw = raw.get("cameras", [])
@@ -143,6 +156,7 @@ def load_config(config_path: str | Path) -> AgentConfig:
         device=device,
         logging=logging_cfg,
         storage=storage_cfg,
+        cloud=cloud_cfg,
         model_catalog=model_catalog,
         cameras=cameras,
         status_interval_seconds=status_interval_seconds,
@@ -166,9 +180,7 @@ def load_raw_config(config_path: str | Path) -> dict[str, Any]:
 def save_raw_config(config_path: str | Path, raw_config: dict[str, Any]) -> Path:
     path = Path(config_path).expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(raw_config, handle, ensure_ascii=False, indent=2)
-        handle.write("\n")
+    atomic_write(path, (json.dumps(raw_config, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
     return path
 
 
@@ -233,15 +245,14 @@ def build_camera_entry_from_template(
     display.setdefault("show_metrics", True)
     display.setdefault("draw_zones", True)
     display.setdefault("max_width", None)
-    display.setdefault("target_fps", 30)
+    display.setdefault("target_fps", 24)
     display.setdefault("fullscreen", False)
     display.setdefault("fit_mode", "contain")
     display.setdefault("interpolation", "auto")
     display.setdefault("enhance", isinstance(source, int))
     display["window_name"] = f"Stealth Lens Knife Agent - {name}"
 
-    behavior = entry.setdefault("smoking_behavior", {})
-    behavior["enabled"] = False
+    entry.pop("smoking_behavior", None)
 
     return entry
 
@@ -260,6 +271,14 @@ def build_default_raw_config() -> dict[str, Any]:
             "snapshots_dir": "artifacts/snapshots",
             "status_path": "artifacts/status/agent-status.json",
         },
+        "cloud": {
+            "enabled": False,
+            "api_base_url": "https://api-f22.onrender.com",
+            "agent_access_key": "",
+            "sync_discovered_cameras": True,
+            "sync_events": True,
+            "timeout_seconds": 8,
+        },
         "model_catalog": _default_model_catalog(),
         "cameras": [],
     }
@@ -277,6 +296,22 @@ def _load_storage_config(base_dir: Path, raw: dict[str, Any]) -> StorageConfig:
         events_dir=_resolve_path(base_dir, raw.get("events_dir", "artifacts/events")),
         snapshots_dir=_resolve_path(base_dir, raw.get("snapshots_dir", "artifacts/snapshots")),
         status_path=_resolve_path(base_dir, raw.get("status_path", "artifacts/status/agent-status.json")),
+    )
+
+
+def _load_cloud_config(raw: Any) -> CloudConfig:
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValueError("'cloud' deve ser um objeto JSON.")
+
+    return CloudConfig(
+        enabled=bool(raw.get("enabled", False)),
+        api_base_url=str(raw.get("api_base_url", "")).strip().rstrip("/"),
+        agent_access_key=str(raw.get("agent_access_key", "")).strip(),
+        sync_discovered_cameras=bool(raw.get("sync_discovered_cameras", True)),
+        sync_events=bool(raw.get("sync_events", True)),
+        timeout_seconds=max(2.0, min(30.0, float(raw.get("timeout_seconds", 8.0)))),
     )
 
 
@@ -337,7 +372,7 @@ def _load_camera_config(raw: dict[str, Any], index: int) -> CameraConfig:
         fps_analysis=max(0.5, float(raw.get("fps_analysis", 3.0))),
         enabled=bool(raw.get("enabled", True)),
         snapshot_on_event=bool(raw.get("snapshot_on_event", True)),
-        queue_maxsize=max(1, int(raw.get("queue_maxsize", 4))),
+        queue_maxsize=max(1, int(raw.get("queue_maxsize", 2))),
         reconnect_initial_delay=max(1.0, float(raw.get("reconnect_initial_delay", 2.0))),
         reconnect_max_delay=max(2.0, float(raw.get("reconnect_max_delay", 30.0))),
         cooldown_seconds=max(0.0, float(raw.get("cooldown_seconds", 10.0))),
@@ -595,7 +630,7 @@ def _select_camera_template(raw_config: dict[str, Any]) -> dict[str, Any]:
         "fps_analysis": 3,
         "enabled": True,
         "snapshot_on_event": True,
-        "queue_maxsize": 4,
+        "queue_maxsize": 2,
         "cooldown_seconds": 10,
         "backend_preference": "auto",
         "zones": [],
@@ -605,27 +640,11 @@ def _select_camera_template(raw_config: dict[str, Any]) -> dict[str, Any]:
             "show_metrics": True,
             "draw_zones": True,
             "max_width": None,
-            "target_fps": 30,
+            "target_fps": 24,
             "fullscreen": False,
             "fit_mode": "contain",
             "interpolation": "auto",
             "enhance": True,
-        },
-        "smoking_behavior": {
-            "enabled": False,
-            "model": "knife_monitor",
-            "person_label": "person",
-            "cigarette_label": "cigarette",
-            "smoke_label": "smoke",
-            "event_type": "smoking",
-            "max_distance_px": 80,
-            "smoke_distance_multiplier": 1.35,
-            "min_frames": 12,
-            "decay_frames": 1,
-            "smoke_boost_frames": 2,
-            "stale_track_seconds": 5,
-            "event_cooldown_seconds": 20,
-            "require_person_track": True,
         },
     }
 
@@ -644,6 +663,7 @@ def _default_model_catalog() -> dict[str, Any]:
             "emit_events": True,
             "use_tracking": True,
             "tracker": "bytetrack.yaml",
+            "input_size": 640,
         }
     }
 
@@ -728,7 +748,7 @@ def _apply_runtime_camera_migrations(raw_config: dict[str, Any]) -> dict[str, An
         display.setdefault("fit_mode", "contain")
         display.setdefault("interpolation", "auto")
         display.setdefault("enhance", is_local_source)
-        display.setdefault("target_fps", 30)
+        display.setdefault("target_fps", 24)
         display.setdefault("fullscreen", False)
         display["fit_mode"] = _normalize_fit_mode(display.get("fit_mode"))
         display["interpolation"] = _normalize_interpolation(display.get("interpolation"))
@@ -748,6 +768,7 @@ def _build_lite_smoking_model_entry(path_value: str) -> dict[str, Any]:
         "cooldown_seconds": 4,
         "emit_events": True,
         "use_tracking": True,
+        "input_size": 640,
         "enabled": True,
     }
 
@@ -785,7 +806,7 @@ def _apply_raw_defaults(raw_config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw.get("cameras"), list):
         raw["cameras"] = []
 
-    for key in ("agent_id", "device", "status_interval_seconds", "logging", "storage"):
+    for key in ("agent_id", "device", "status_interval_seconds", "logging", "storage", "cloud"):
         raw.setdefault(key, copy.deepcopy(defaults[key]))
 
     raw_model_catalog: dict[str, Any] = raw["model_catalog"]

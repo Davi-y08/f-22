@@ -41,6 +41,7 @@ export type DetectionEvent = {
   metadata?: string;
   model_alias: string;
   occurred_at: string;
+  public_snapshot_url?: string;
   snapshot_filename?: string;
   snapshot_mime_type?: string;
   snapshot_path?: string;

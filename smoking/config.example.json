@@ -31,7 +31,8 @@
       "cooldown_seconds": 8,
       "emit_events": false,
       "use_tracking": true,
-      "tracker": "bytetrack.yaml"
+      "tracker": "bytetrack.yaml",
+      "input_size": 640
     }
   },
   "cameras": [
@@ -45,7 +46,7 @@
       "fps_analysis": 3,
       "enabled": true,
       "snapshot_on_event": true,
-      "queue_maxsize": 4,
+      "queue_maxsize": 2,
       "cooldown_seconds": 10,
       "backend_preference": "auto",
       "zones": [],
@@ -55,7 +56,7 @@
         "show_metrics": true,
         "draw_zones": true,
         "max_width": null,
-        "target_fps": 30,
+        "target_fps": 24,
         "fullscreen": false,
         "fit_mode": "contain",
         "interpolation": "auto",
@@ -71,6 +72,13 @@
         "max_distance_px": 80,
         "smoke_distance_multiplier": 1.35,
         "min_frames": 7,
+        "min_evidence_frames": 3,
+        "min_cigarette_evidence_frames": 1,
+        "min_person_confidence": 0.25,
+        "min_cigarette_confidence": 0.28,
+        "min_smoke_confidence": 0.25,
+        "min_association_score": 0.2,
+        "distance_person_scale": 0.24,
         "decay_frames": 1,
         "smoke_boost_frames": 2,
         "stale_track_seconds": 5,
