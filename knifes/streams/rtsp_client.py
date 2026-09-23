@@ -32,7 +32,7 @@ class StreamReadError(RuntimeError):
     """Raised when a backend cannot provide a frame."""
 
 
-class RTSPClient:
+class _StreamCapture:
     def __init__(
         self,
         source: str | int,
@@ -52,6 +52,11 @@ class RTSPClient:
         self._frames: queue.Queue[FramePacket] = queue.Queue(maxsize=self.queue_maxsize)
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._closed_event = threading.Event()
+        self._closed_event.set()
+        self._sinks: set[queue.Queue[FramePacket]] = set()
+        self._sink_lock = threading.Lock()
+        self._last_frame_monotonic: float | None = None
         self._status_lock = threading.Lock()
         self._frame_counter = 0
         self._status: dict[str, Any] = {
@@ -68,8 +73,9 @@ class RTSPClient:
             return
 
         self._stop_event.clear()
+        self._closed_event.clear()
         self._clear_frames()
-        self._thread = threading.Thread(target=self._reader_loop, name="rtsp-reader", daemon=True)
+        self._thread = threading.Thread(target=self._run_capture, name="stream-reader", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -96,7 +102,18 @@ class RTSPClient:
         with self._status_lock:
             snapshot = dict(self._status)
         snapshot["queue_depth"] = self._frames.qsize()
+        age = time.monotonic() - self._last_frame_monotonic if self._last_frame_monotonic is not None else None
+        snapshot["frame_age_ms"] = round(age * 1000) if age is not None else None
+        if age is not None and age > 5.0:
+            snapshot["online"] = False
         return snapshot
+
+    def _run_capture(self) -> None:
+        try:
+            self._reader_loop()
+        finally:
+            self._set_status(online=False)
+            self._closed_event.set()
 
     def _reader_loop(self) -> None:
         delay = self.reconnect_initial_delay
@@ -104,10 +121,10 @@ class RTSPClient:
 
         while not self._stop_event.is_set():
             reader = None
+            received_frame = False
             try:
                 reader = self._build_reader(current_preference)
                 reader.open()
-                current_preference = self.backend_preference
                 self._set_status(
                     online=False,
                     backend=reader.backend_name,
@@ -118,6 +135,9 @@ class RTSPClient:
                     frame = reader.read()
                     if self._stop_event.is_set():
                         break
+                    received_frame = True
+                    if self.backend_preference.lower() == "auto":
+                        current_preference = reader.backend_name
                     delay = self.reconnect_initial_delay
                     packet = FramePacket(
                         frame_id=self._next_frame_id(),
@@ -125,6 +145,7 @@ class RTSPClient:
                         captured_at=datetime.now(timezone.utc),
                     )
                     self._push_frame(packet)
+                    self._last_frame_monotonic = time.monotonic()
                     self._set_status(
                         online=True,
                         backend=reader.backend_name,
@@ -138,6 +159,7 @@ class RTSPClient:
                     reader is not None
                     and reader.backend_name == "pyav"
                     and self.backend_preference.lower() == "auto"
+                    and not received_frame
                 ):
                     current_preference = "opencv"
                 self._set_status(
@@ -193,25 +215,30 @@ class RTSPClient:
         return _OpenCVReader(self.source)
 
     def _push_frame(self, packet: FramePacket) -> None:
-        while self._frames.full():
+        with self._sink_lock:
+            sinks = list(self._sinks) or [self._frames]
+        for sink in sinks:
+            while sink.full():
+                try:
+                    sink.get_nowait()
+                    self._increment_status_counter("dropped_frames")
+                except queue.Empty:
+                    break
             try:
-                self._frames.get_nowait()
+                sink.put_nowait(packet)
+            except queue.Full:
                 self._increment_status_counter("dropped_frames")
-            except queue.Empty:
-                break
-
-        try:
-            self._frames.put_nowait(packet)
-        except queue.Full:
-            self._increment_status_counter("dropped_frames")
 
     def _clear_frames(self) -> None:
-        while True:
-            try:
-                self._frames.get_nowait()
-                self._increment_status_counter("dropped_frames")
-            except queue.Empty:
-                return
+        with self._sink_lock:
+            sinks = [self._frames, *self._sinks]
+        for sink in sinks:
+            while True:
+                try:
+                    sink.get_nowait()
+                    self._increment_status_counter("dropped_frames")
+                except queue.Empty:
+                    break
 
     def _next_frame_id(self) -> int:
         self._frame_counter += 1
@@ -227,6 +254,129 @@ class RTSPClient:
 
     def _sleep_with_stop(self, seconds: float) -> None:
         self._stop_event.wait(max(0.0, seconds))
+
+
+_CAPTURES_LOCK = threading.Lock()
+_HTTP_CAPTURES: dict[tuple[str, str], _StreamCapture] = {}
+
+
+class RTSPClient:
+    """Each consumer gets current frames; identical HTTP URLs share one connection."""
+
+    def __init__(
+        self,
+        source: str | int,
+        backend_preference: str = "auto",
+        queue_maxsize: int = 2,
+        reconnect_initial_delay: float = 2.0,
+        reconnect_max_delay: float = 30.0,
+        logger: Any | None = None,
+    ) -> None:
+        self.source = source
+        self.backend_preference = backend_preference
+        self._frames: queue.Queue[FramePacket] = queue.Queue(maxsize=max(1, queue_maxsize))
+        self._settings = {
+            "source": source, "backend_preference": backend_preference,
+            "queue_maxsize": queue_maxsize, "reconnect_initial_delay": reconnect_initial_delay,
+            "reconnect_max_delay": reconnect_max_delay, "logger": logger,
+        }
+        self._key = (_http_source_key(source), backend_preference.lower()) if _is_http_source(source) else None
+        self._capture: _StreamCapture | None = None
+        self._last_status: dict[str, Any] = {
+            "online": False, "backend": None, "last_frame_at": None, "last_error": None,
+            "reconnect_attempts": 0, "dropped_frames": 0, "queue_depth": 0, "frame_age_ms": None,
+        }
+
+    def start(self) -> None:
+        while True:
+            with _CAPTURES_LOCK:
+                if self._capture is not None:
+                    return
+                capture = _HTTP_CAPTURES.get(self._key) if self._key else None
+                if capture is None or capture._closed_event.is_set():
+                    capture = _StreamCapture(**self._settings)
+                    if self._key:
+                        _HTTP_CAPTURES[self._key] = capture
+                if not capture._stop_event.is_set():
+                    with capture._sink_lock:
+                        capture._sinks.add(self._frames)
+                    self._capture = capture
+                    capture.start()
+                    return
+            # Never open a replacement while the previous connection is still closing.
+            if not capture._closed_event.wait(6.0):
+                raise StreamReadError("A conexao anterior da camera ainda esta encerrando.")
+
+    def stop(self) -> None:
+        with _CAPTURES_LOCK:
+            capture = self._capture
+            if capture is None:
+                return
+            self._last_status = self.status_snapshot()
+            self._capture = None
+            with capture._sink_lock:
+                capture._sinks.discard(self._frames)
+                last_consumer = not capture._sinks
+            if last_consumer:
+                capture._stop_event.set()
+        if last_consumer:
+            capture.stop()
+            with _CAPTURES_LOCK:
+                if capture._closed_event.is_set() and self._key and _HTTP_CAPTURES.get(self._key) is capture:
+                    del _HTTP_CAPTURES[self._key]
+        while not self._frames.empty():
+            try:
+                self._frames.get_nowait()
+            except queue.Empty:
+                break
+        self._last_status.update(online=False, queue_depth=0, shared_consumers=0)
+
+    def read_latest(self, timeout: float = 1.0) -> FramePacket | None:
+        try:
+            packet = self._frames.get(timeout=timeout)
+        except queue.Empty:
+            return None
+        while True:
+            try:
+                packet = self._frames.get_nowait()
+            except queue.Empty:
+                return packet
+
+    def status_snapshot(self) -> dict[str, Any]:
+        capture = self._capture
+        if capture is None:
+            return dict(self._last_status)
+        status = capture.status_snapshot()
+        status["queue_depth"] = self._frames.qsize()
+        with capture._sink_lock:
+            status["shared_consumers"] = len(capture._sinks)
+        return status
+
+
+def _is_http_source(source: Any) -> bool:
+    return isinstance(source, str) and urlsplit(source).scheme.lower() in {"http", "https"}
+
+
+def _http_source_key(source: str | int) -> str:
+    parsed = urlsplit(str(source).strip())
+    port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+    # Keep credentials, path and query: they may identify different streams.
+    return repr((parsed.scheme.lower(), parsed.hostname, port, parsed.username, parsed.password,
+                 parsed.path or "/", parsed.query))
+
+
+def _active_http_stream(source: str | int, timeout: float) -> bool | None:
+    key = _http_source_key(source)
+    with _CAPTURES_LOCK:
+        captures = [capture for (url, _), capture in _HTTP_CAPTURES.items() if url == key]
+    if not captures:
+        return None
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if any(capture.status_snapshot()["online"] for capture in captures):
+            return True
+        time.sleep(0.05)
+    return False
 
 
 class _BaseReader:
@@ -274,7 +424,7 @@ class _OpenCVReader(_BaseReader):
             raise StreamReadError("Stream OpenCV não inicializado.")
 
         last_error: Exception | None = None
-        attempts = 5 if isinstance(self.source, int) else 2
+        attempts = 5 if isinstance(self.source, int) else 1
         for _ in range(attempts):
             try:
                 success, frame = self.capture.read()
@@ -315,15 +465,12 @@ class _PyAVReader(_BaseReader):
             self.container = av.open(
                 self.source,
                 timeout=(5.0, 5.0),
-                options={
-                    "rtsp_transport": "tcp",
-                    "fflags": "nobuffer",
-                    "flags": "low_delay",
-                    "max_delay": "500000",
-                    "stimeout": "5000000",
-                },
+                options=_network_stream_options(self.source, 5.0),
             )
             self.video_stream = next(stream for stream in self.container.streams if stream.type == "video")
+            if _is_http_source(self.source):
+                self.video_stream.codec_context.thread_count = 1
+                self.video_stream.codec_context.thread_type = "SLICE"
             self.frames = self.container.decode(self.video_stream)
         except Exception as exc:
             raise StreamReadError(
@@ -367,6 +514,11 @@ def test_stream_source(
         if rtsp_status is not None:
             return rtsp_status
 
+    if _is_http_source(source):
+        active = _active_http_stream(source, timeout_seconds)
+        if active is not None:
+            return active
+
     preference = backend_preference.lower()
     if preference in {"auto", "pyav"} and av is not None:
         container = None
@@ -374,12 +526,7 @@ def test_stream_source(
             container = av.open(
                 source,
                 timeout=(timeout_seconds, timeout_seconds),
-                options={
-                    "rtsp_transport": "tcp",
-                    "fflags": "nobuffer",
-                    "flags": "low_delay",
-                    "stimeout": str(int(timeout_seconds * 1_000_000)),
-                },
+                options=_network_stream_options(source, timeout_seconds),
             )
             video_stream = next(stream for stream in container.streams if stream.type == "video")
             frame = next(container.decode(video_stream))
@@ -415,6 +562,21 @@ def _is_rtsp_source(source: Any) -> bool:
     if not isinstance(source, str):
         return False
     return urlsplit(source).scheme.lower() in {"rtsp", "rtsps"}
+
+
+def _network_stream_options(source: str, timeout: float) -> dict[str, str]:
+    options = {"rw_timeout": str(int(timeout * 1_000_000))}
+    if _is_http_source(source):
+        options.update({
+            "fflags": "discardcorrupt", "probesize": "32768",
+            "analyzeduration": "500000", "fpsprobesize": "2",
+        })
+    else:
+        options.update({
+            "rtsp_transport": "tcp", "fflags": "nobuffer", "flags": "low_delay",
+            "max_delay": "500000", "stimeout": str(int(timeout * 1_000_000)),
+        })
+    return options
 
 
 def _quick_rtsp_describe(source: str, timeout_seconds: float) -> bool | None:
@@ -534,26 +696,22 @@ def _create_network_capture(source: str, backend_id: int | None) -> cv2.VideoCap
         params.extend([open_timeout, 5000])
     if isinstance(read_timeout, int):
         params.extend([read_timeout, 5000])
+    decoder_threads = getattr(cv2, "CAP_PROP_N_THREADS", None)
+    if _is_http_source(source) and isinstance(decoder_threads, int):
+        params.extend([decoder_threads, 1])
 
     try:
-        if params and backend_id is not None:
-            return cv2.VideoCapture(source, backend_id, params)
-        if backend_id is not None:
-            return cv2.VideoCapture(source, backend_id)
-        return cv2.VideoCapture(source)
+        if params:
+            return cv2.VideoCapture(source, backend_id if backend_id is not None else cv2.CAP_ANY, params)
+        return None
     except Exception:
-        try:
-            if backend_id is not None:
-                return cv2.VideoCapture(source, backend_id)
-            return cv2.VideoCapture(source)
-        except Exception:
-            return None
+        return None
 
 
 def _configure_network_capture_options() -> None:
     os.environ.setdefault(
         "OPENCV_FFMPEG_CAPTURE_OPTIONS",
-        "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|max_delay;500000|stimeout;5000000",
+        "rtsp_transport;tcp|flags;low_delay|max_delay;500000|rw_timeout;5000000",
     )
 
 

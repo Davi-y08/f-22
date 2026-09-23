@@ -479,10 +479,13 @@ function HomePage() {
               accent: "from-rose-500 to-red-500",
               chip: "bg-red-700/10 text-red-700 dark:bg-red-300/12 dark:text-red-100",
             },
-            { label: "Total", value: totals.all, detail: "câmeras cadastradas" },
-            { label: "Online", value: totals.online, detail: "pontos ativos" },
-            { label: "Offline", value: totals.offline, detail: "precisam de atenção" },
-            { label: "Alertas", value: totals.alerts, detail: "eventos recentes" },
+            {
+              label: "Alertas",
+              value: totals.alerts,
+              detail: "eventos recentes",
+              accent: "from-amber-500 to-orange-500",
+              chip: "bg-amber-700/10 text-amber-700 dark:bg-amber-300/12 dark:text-amber-100",
+            },
           ].map((item) => (
             <article
               className="surface relative overflow-hidden rounded-xl p-5 transition hover:-translate-y-0.5 hover:shadow-[0_24px_60px_rgba(2,44,80,0.16)] dark:hover:shadow-[0_24px_60px_rgba(0,0,0,0.45)]"

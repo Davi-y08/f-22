@@ -50,6 +50,7 @@ class CameraWorker(threading.Thread):
         self._behavior_status_lines: list[str] = []
         self._started_at = time.monotonic()
         self._last_render_at = 0.0
+        self._last_preview_frame: Any | None = None
         self._last_status_sync_at = 0.0
         self._analysis_interval = 1.0 / max(self.camera_config.fps_analysis, 0.1)
         self._consecutive_analysis_failures = 0
@@ -111,6 +112,8 @@ class CameraWorker(threading.Thread):
         snapshot.update(
             {
                 "queue_depth": stream_status["queue_depth"],
+                "frame_age_ms": stream_status.get("frame_age_ms"),
+                "shared_consumers": stream_status.get("shared_consumers", 1),
                 "dropped_frames": stream_status["dropped_frames"],
                 "reconnect_attempts": stream_status["reconnect_attempts"],
                 "analyzed_frames": analyzed_frames,
@@ -146,7 +149,10 @@ class CameraWorker(threading.Thread):
                 self._sync_stream_status(now=now)
 
                 if packet is None:
+                    if self._last_preview_frame is not None:
+                        self._safe_maybe_render_frame(self._last_preview_frame, now=now, force=False)
                     continue
+                self._last_preview_frame = packet.frame
 
                 if analysis_future is None or analysis_future.done():
                     if analysis_future is not None:
@@ -360,7 +366,7 @@ class CameraWorker(threading.Thread):
             camera_id=self.camera_config.id,
             window_name=self.camera_config.display.window_name or self.camera_config.name,
             frame=annotated,
-            max_width=self.camera_config.display.max_width,
+            max_width=self.camera_config.display.max_width or (1280 if self.display_camera_count <= 1 else 960),
             fullscreen=self.camera_config.display.fullscreen,
             fit_mode=self.camera_config.display.fit_mode,
             interpolation=self.camera_config.display.interpolation,

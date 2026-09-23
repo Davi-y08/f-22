@@ -17,7 +17,7 @@ from agent.worker import CameraWorker
 from cloud.client import CloudClient, CloudClientError
 from events.emitter import DetectionEvent, FileEventEmitter
 from models.loader import Detection, OnnxModelSession, _SimpleTracker, _class_aware_nms, _decode_predictions, _reshape_predictions
-from streams.rtsp_client import FramePacket, RTSPClient, _OpenCVReader
+from streams.rtsp_client import FramePacket, _StreamCapture, _OpenCVReader
 from utils.config import CameraConfig, CloudConfig, DisplayConfig, save_raw_config
 
 
@@ -185,14 +185,14 @@ class CameraReliabilityTests(unittest.TestCase):
         self.assertEqual(emitter.emit.call_args.kwargs["event"].timestamp, captured_at.isoformat())
 
     def test_latest_frame_skips_backlog_and_counts_discarded_frames(self) -> None:
-        client = RTSPClient(0, queue_maxsize=3)
+        client = _StreamCapture(0, queue_maxsize=3)
         for index in range(3):
             client._push_frame(FramePacket(index, index, datetime.now(timezone.utc)))
         self.assertEqual(client.read_latest(timeout=0).frame_id, 2)
         self.assertEqual(client.status_snapshot()["dropped_frames"], 2)
 
     def test_failed_reader_is_closed_before_reconnect_wait(self) -> None:
-        client = RTSPClient("http://example.test/video", backend_preference="opencv")
+        client = _StreamCapture("http://example.test/video", backend_preference="opencv")
         reader = Mock(backend_name="opencv")
         reader.read.side_effect = RuntimeError("disconnected")
         def wait_and_stop(seconds: float) -> None:

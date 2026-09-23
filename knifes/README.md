@@ -106,6 +106,19 @@ Para parar:
 
 ## Confiabilidade e diagnostico
 
+### Cameras HTTP repetidas
+
+- Dentro de uma instancia do aplicativo, consumidores da mesma URL HTTP e do mesmo backend compartilham uma conexao e um decodificador.
+- Cada consumidor recebe os frames recentes em sua propria fila limitada. Uma janela lenta nao segura as demais.
+- Validar uma URL ja monitorada consulta a captura ativa, sem abrir outra conexao com a camera.
+- URLs que diferem em porta, caminho, canal (query) ou credenciais continuam independentes. Repetir exatamente uma URL significa repetir o mesmo video.
+- Capturas sem resposta possuem timeout de rede; a reconexao preserva o backend que ja funcionou. O status inclui idade do ultimo frame e quantidade de consumidores.
+- Falhas de renderizacao ficam isoladas por camera. A reducao da imagem e feita antes do filtro de nitidez; o limite automatico do preview e 1280 px (uma camera) ou 960 px (varias). A analise e a foto do alerta continuam usando o frame original.
+
+O compartilhamento e local a cada processo: smoking e knifes abertos como dois executaveis ainda fazem uma conexao cada. Uma camera com limite de uma unica conexao precisa disponibilizar um relay para uso simultaneo nesses dois processos.
+
+Teste HTTP real em servidor local MJPEG: `python -m unittest tests.test_http_streams -v`. Inclui URLs repetidas, canais distintos no mesmo IP, consumidor lento, desconexao e servidor que para de enviar frames.
+
 - A exibicao usa os frames atuais enquanto uma unica analise por camera roda em paralelo. Nao ha fila crescente de inferencias.
 - A fila de envio fica em `artifacts/events/cloud-outbox.sqlite3`. Falhas temporarias sao tentadas novamente com intervalo crescente, ate 60 segundos, inclusive apos reiniciar.
 - As fotos permanecem na pasta de snapshots e sao carregadas somente na hora de enviar. Preserve essa pasta junto com a fila ao mover a instalacao.

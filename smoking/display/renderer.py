@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ class DisplayRenderer:
         self._windows: dict[str, _WindowState] = {}
         self._last_presented_sequences: dict[str, int] = {}
         self._submission_sequences: dict[str, int] = {}
+        self._last_error_at: dict[str, float] = {}
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._user_stop_event = threading.Event()
@@ -110,28 +112,16 @@ class DisplayRenderer:
             self._destroy_stale_windows(active_camera_ids)
 
             for item in snapshot:
-                effective_fullscreen = (
-                    item.fullscreen
-                    if self._manual_fullscreen_override is None
-                    else self._manual_fullscreen_override
-                )
-                geometry_changed = self._ensure_window(item.camera_id, item.window_name, effective_fullscreen)
-                if (
-                    not geometry_changed
-                    and self._last_presented_sequences.get(item.camera_id) == item.sequence
-                ):
-                    continue
-                frame = _prepare_display_frame(
-                    frame=item.frame,
-                    max_width=item.max_width,
-                    fullscreen=effective_fullscreen,
-                    fit_mode=item.fit_mode,
-                    interpolation=item.interpolation,
-                    enhance=item.enhance,
-                    screen_size=self._screen_size,
-                )
-                cv2.imshow(item.window_name, frame)
-                self._last_presented_sequences[item.camera_id] = item.sequence
+                try:
+                    self._present_frame(item)
+                except Exception:
+                    now = time.monotonic()
+                    last_error = self._last_error_at.get(item.camera_id)
+                    if last_error is None or now - last_error >= 5.0:
+                        self._last_error_at[item.camera_id] = now
+                        logging.getLogger("stealth_lens.display").exception(
+                            "camera_display_failed", extra={"camera_id": item.camera_id},
+                        )
 
             key = cv2.waitKey(1) & 0xFF
             if key in {27, ord("q"), ord("Q")}:
@@ -144,6 +134,21 @@ class DisplayRenderer:
             elapsed = time.perf_counter() - loop_started
             if elapsed < self._frame_interval:
                 time.sleep(min(self._frame_interval - elapsed, 0.02))
+
+    def _present_frame(self, item: DisplayFrame) -> None:
+        effective_fullscreen = (
+            item.fullscreen if self._manual_fullscreen_override is None else self._manual_fullscreen_override
+        )
+        geometry_changed = self._ensure_window(item.camera_id, item.window_name, effective_fullscreen)
+        if not geometry_changed and self._last_presented_sequences.get(item.camera_id) == item.sequence:
+            return
+        frame = _prepare_display_frame(
+            frame=item.frame, max_width=item.max_width, fullscreen=effective_fullscreen,
+            fit_mode=item.fit_mode, interpolation=item.interpolation, enhance=item.enhance,
+            screen_size=self._screen_size,
+        )
+        cv2.imshow(item.window_name, frame)
+        self._last_presented_sequences[item.camera_id] = item.sequence
 
     def _ensure_window(self, camera_id: str, window_name: str, fullscreen: bool) -> bool:
         state = self._windows.get(camera_id)
@@ -207,21 +212,18 @@ def _prepare_display_frame(
     enhance: bool,
     screen_size: tuple[int, int],
 ) -> Any:
-    output = frame
-    if enhance:
-        output = _enhance_frame(output)
-
     if fullscreen:
         screen_w, screen_h = screen_size
-        return _fit_to_screen(
-            frame=output,
+        output = _fit_to_screen(
+            frame=frame,
             target_width=screen_w,
             target_height=screen_h,
             fit_mode=fit_mode,
             interpolation=interpolation,
         )
-
-    return _resize_if_needed(output, max_width=max_width, interpolation=interpolation)
+    else:
+        output = _resize_if_needed(frame, max_width=max_width, interpolation=interpolation)
+    return _enhance_frame(output) if enhance else output
 
 
 def _resize_if_needed(frame: Any, max_width: int | None, interpolation: str) -> Any:
